@@ -79,7 +79,7 @@ class TelegramProductScraper:
         except Exception as e:
             print(f"Error downloading image: {e}")
             return None
-    
+
     async def send_to_backend(self, product_data: Dict):
         """إرسال البيانات للـ Backend"""
         try:
@@ -91,22 +91,33 @@ class TelegramProductScraper:
                         with open(image_path, 'rb') as f:
                             form = aiohttp.FormData()
                             form.add_field('file', f, filename=os.path.basename(image_path))
-                            
+
                             async with session.post(f"{BACKEND_URL}/upload", data=form) as resp:
+                                resp_text = await resp.text()
                                 if resp.status == 200:
                                     result = await resp.json()
-                                    image_urls.append(result['url'])
-                
-                # إرسال بيانات المنتج
+                                    image_urls.append(result.get('url'))
+                                else:
+                                    print(f"⚠️ Upload failed ({resp.status}) for {image_path}")
+                                    print(f"🧾 Response: {resp_text}")
+
+                # تجهيز بيانات المنتج للإرسال
                 product_data['image_urls'] = image_urls
                 del product_data['images']
-                
+
+                # 🟡 اطبع البيانات اللي هتتبعت للـ backend
+                print("\n📤 Sending product to backend:")
+                print(json.dumps(product_data, ensure_ascii=False, indent=2))
+
+                # إرسال بيانات المنتج
                 async with session.post(BACKEND_URL, json=product_data) as resp:
+                    resp_text = await resp.text()
                     if resp.status == 201:
                         print(f"✅ Product sent successfully: {product_data['description'][:50]}...")
                     else:
                         print(f"❌ Failed to send product: {resp.status}")
-                        
+                        print(f"🧾 Response: {resp_text}")
+
         except Exception as e:
             print(f"Error sending to backend: {e}")
     
