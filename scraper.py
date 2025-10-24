@@ -39,7 +39,9 @@ CHANNELS = {
 
 class TelegramProductScraper:
     def __init__(self):
+        print("🛠️ Initializing TelegramClient...", flush=True)
         self.client = TelegramClient('scraper_session', API_ID, API_HASH)
+        print("✅ Client initialized", flush=True)
         self.products = []
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
