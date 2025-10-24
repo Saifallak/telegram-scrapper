@@ -1,14 +1,17 @@
-import aiohttp
 import asyncio
 import json
 import os
 import re
-from datetime import datetime
 from datetime import datetime, timezone
+from typing import Dict, Optional
+
+import aiohttp
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
+from telethon.errors import FloodWaitError, UserAlreadyParticipantError, UserNotParticipantError
+from telethon.tl.functions.channels import JoinChannelRequest, GetParticipantRequest
+from telethon.tl.types import InputPeerChannel
 from telethon.tl.types import MessageMediaPhoto
-from typing import List, Dict, Optional
 
 load_dotenv()
 
@@ -45,8 +48,8 @@ class TelegramProductScraper:
         self.products = []
 
         self.processed_messages = set()  # لتخزين الرسائل المعالجة
-        self.pending_media = {}           # لتخزين الميديا المؤجلة
-        self.message_cache = {}           # لتخزين الرسائل السابقة لتسهيل البحث
+        self.pending_media = {}  # لتخزين الميديا المؤجلة
+        self.message_cache = {}  # لتخزين الرسائل السابقة لتسهيل البحث
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
@@ -375,10 +378,11 @@ class TelegramProductScraper:
         await self.send_to_backend(product)
 
         print(
-            f"📦 Product processed: {product['name'][:50]} | {len(product['images'])} images | Price: {product['prices']['current_price']}", flush=True)
+            f"📦 Product processed: {product['name'][:50]} | {len(product['images'])} images | Price: {product['prices']['current_price']}",
+            flush=True)
 
     async def scrape_channel_history(self, channel_link: str):
-        """سكرابينج تاريخ القناة حتى تاريخ محدد"""
+        """سكرابينج تاريخ القناة مع تحقق سريع من العضوية"""
         try:
             stop_date_str = os.getenv('STOP_DATE', '')
             stop_date = None
@@ -389,20 +393,42 @@ class TelegramProductScraper:
                 except ValueError:
                     print("⚠️ تنبيه: تنسيق STOP_DATE غير صحيح! استخدم YYYY-MM-DD.", flush=True)
 
-            # اسم القناة المخصص من الـ dict
             channel_name = CHANNELS.get(channel_link, 'قناة غير معروفة')
 
-            # الانضمام للقناة
-            entity = await self.client.get_entity(channel_link)
+            # الحصول على الـ entity مع معالجة FloodWaitError
+            while True:
+                try:
+                    entity = await self.client.get_entity(channel_link)
+
+                    # تحقق سريع من عضويتك
+                    try:
+                        me = await self.client.get_me()
+                        await self.client(GetParticipantRequest(channel=entity, user_id=me.id))
+                        print(f"✅ Already a member of {entity.title} ({channel_name}), skipping join")
+                    except UserNotParticipantError:
+                        # لو مش عضو، انضم
+                        try:
+                            await self.client(JoinChannelRequest(entity))
+                            print(f"✅ Joined {entity.title} ({channel_name})")
+                        except UserAlreadyParticipantError:
+                            print(f"✅ Already joined {entity.title}")
+
+                    break  # تم الحصول على الـ entity بنجاح
+
+                except FloodWaitError as e:
+                    print(f"⏳ Flood wait: need to wait {e.seconds} seconds before retrying...")
+                    await asyncio.sleep(e.seconds)
+                except Exception as e:
+                    print(f"❌ Failed to get entity {channel_link}: {e}", flush=True)
+                    return
+
             print(f"🔍 Scraping channel: {entity.title} ({channel_name})", flush=True)
 
-            # جلب الرسائل
             async for message in self.client.iter_messages(entity):
                 if stop_date and message.date < stop_date:
                     print(f"⏹️ Stopped at {message.date}", flush=True)
                     break
 
-                # نمرر اسم القناة للمنتج
                 await self.process_message(message, channel_name)
                 await asyncio.sleep(0.5)
 
