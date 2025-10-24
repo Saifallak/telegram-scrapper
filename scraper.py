@@ -154,6 +154,12 @@ class TelegramProductScraper:
                         elif getattr(product_data.get('media_type', None), 'document', None):
                             content_type = 'application/octet-stream'
 
+                        print(media_path)
+
+                        if content_type != 'image/jpeg':
+                            print(f"⚠️ Skipping Media: {media_path}")
+                            continue
+
                         form.add_field(
                             'variants[0][images][]',
                             open(media_path, 'rb'),
