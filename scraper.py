@@ -418,9 +418,9 @@ class TelegramProductScraper:
 
     async def run(self, mode='history'):
         """تشغيل السكرابر"""
-        print("🔄 Connecting to Telegram...")
+        print("🔄 Connecting to Telegram...", flush=True)
         await self.client.start(phone=PHONE)
-        print("✅ Connected to Telegram")
+        print("✅ Connected to Telegram", flush=True)
 
         if mode == 'history':
             # سكرابينج التاريخ فقط
@@ -439,7 +439,7 @@ class TelegramProductScraper:
 
         elif mode == 'hybrid':
             # 🌀 الوضع الهجين: التاريخ ثم المراقبة المباشرة
-            print("🌀 Hybrid mode: Scraping history first, then monitoring live...")
+            print("🌀 Hybrid mode: Scraping history first, then monitoring live...", flush=True)
 
             for channel in CHANNELS:
                 await self.scrape_channel_history(channel)
