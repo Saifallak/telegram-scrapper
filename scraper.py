@@ -203,7 +203,7 @@ class TelegramProductScraper:
 
         print(f"📦 Product processed: {product['description'][:50]}... | Price: {product['prices']['current_price']}")
 
-    async def scrape_channel_history(self, channel_link: str, limit: int = 100):
+    async def scrape_channel_history(self, channel_link: str):
         """سكرابينج تاريخ القناة حتى تاريخ محدد"""
         try:
             stop_date_str = os.getenv('STOP_DATE', '')
@@ -246,7 +246,7 @@ class TelegramProductScraper:
         print("👀 Monitoring channels for new messages...")
         await self.client.run_until_disconnected()
 
-    async def run(self, mode='history', limit=100):
+    async def run(self, mode='history'):
         """تشغيل السكرابر"""
         await self.client.start(phone=PHONE)
         print("✅ Connected to Telegram")
@@ -254,7 +254,7 @@ class TelegramProductScraper:
         if mode == 'history':
             # سكرابينج التاريخ
             for channel in CHANNELS:
-                await self.scrape_channel_history(channel, limit)
+                await self.scrape_channel_history(channel)
 
             # حفظ البيانات في ملف JSON
             with open('products.json', 'w', encoding='utf-8') as f:
@@ -276,5 +276,5 @@ if __name__ == '__main__':
     # 'history' - لسكرابينج الرسائل القديمة
     # 'live' - للمراقبة المباشرة للرسائل الجديدة
 
-    asyncio.run(scraper.run(mode='history', limit=100))
+    asyncio.run(scraper.run(mode='history'))
     # asyncio.run(scraper.run(mode='live'))
