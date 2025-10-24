@@ -43,7 +43,7 @@ class TelegramProductScraper:
             r'(\d+(?:\.\d+)?)\s*ج\.م',
             r'(\d+(?:\.\d+)?)\s*LE',
             r'السعر[:\s]+(\d+(?:\.\d+)?)',
-            r'بدلا من\s+(\d+(?:\.\d+)?)',
+            r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)',
         ]
         
         prices = {
@@ -52,7 +52,7 @@ class TelegramProductScraper:
         }
         
         # البحث عن "بدلا من" للسعر القديم
-        old_price_match = re.search(r'بدلا من\s+(\d+(?:\.\d+)?)', text)
+        old_price_match = re.search(r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)', text)
         if old_price_match:
             prices['old_price'] = float(old_price_match.group(1))
         
