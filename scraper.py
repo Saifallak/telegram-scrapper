@@ -252,11 +252,10 @@ class TelegramProductScraper:
         print("✅ Connected to Telegram")
 
         if mode == 'history':
-            # سكرابينج التاريخ
+            # سكرابينج التاريخ فقط
             for channel in CHANNELS:
                 await self.scrape_channel_history(channel)
 
-            # حفظ البيانات في ملف JSON
             with open('products.json', 'w', encoding='utf-8') as f:
                 json.dump(self.products, f, ensure_ascii=False, indent=2)
 
@@ -264,7 +263,19 @@ class TelegramProductScraper:
             print("📁 Data saved to products.json")
 
         elif mode == 'live':
-            # المراقبة المباشرة
+            # المراقبة المباشرة فقط
+            await self.start_live_monitoring()
+
+        elif mode == 'hybrid':
+            # 🌀 الوضع الهجين: التاريخ ثم المراقبة المباشرة
+            print("🌀 Hybrid mode: Scraping history first, then monitoring live...")
+
+            for channel in CHANNELS:
+                await self.scrape_channel_history(channel)
+
+            print(f"\n✅ Finished scraping history ({len(self.products)} products).")
+            print("👀 Now switching to live monitoring...\n")
+
             await self.start_live_monitoring()
 
 
@@ -276,5 +287,4 @@ if __name__ == '__main__':
     # 'history' - لسكرابينج الرسائل القديمة
     # 'live' - للمراقبة المباشرة للرسائل الجديدة
 
-    asyncio.run(scraper.run(mode='history'))
-    # asyncio.run(scraper.run(mode='live'))
+    asyncio.run(scraper.run(mode='hybrid'))
