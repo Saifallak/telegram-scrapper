@@ -4,6 +4,7 @@ import json
 import os
 import re
 from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaPhoto
@@ -68,16 +69,23 @@ class TelegramProductScraper:
         return prices
 
     async def download_image(self, message, index: int) -> Optional[str]:
-        """تحميل الصورة وحفظها محلياً"""
+        """تحميل الصورة وحفظها محلياً (مع التحقق من وجودها مسبقاً)"""
         try:
             photo_dir = 'downloaded_images'
             os.makedirs(photo_dir, exist_ok=True)
 
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"{photo_dir}/product_{message.id}_{index}_{timestamp}.jpg"
+            filename = f"{photo_dir}/product_{message.chat_id}_{message.id}_{index}.jpg"
 
+            # ✅ لو الصورة متحملة قبل كده، نتخطى التحميل
+            if os.path.exists(filename):
+                print(f"🟡 Skipping download (already exists): {filename}")
+                return filename
+
+            # تحميل الصورة من تليجرام
             await message.download_media(file=filename)
+            print(f"📥 Downloaded new image: {filename}")
             return filename
+
         except Exception as e:
             print(f"Error downloading image: {e}")
             return None
@@ -193,14 +201,28 @@ class TelegramProductScraper:
         print(f"📦 Product processed: {product['description'][:50]}... | Price: {product['prices']['current_price']}")
 
     async def scrape_channel_history(self, channel_link: str, limit: int = 100):
-        """سكرابينج تاريخ القناة"""
+        """سكرابينج تاريخ القناة حتى تاريخ محدد"""
         try:
+            stop_date_str = os.getenv('STOP_DATE', '')
+            stop_date = None
+            if stop_date_str:
+                try:
+                    stop_date = datetime.strptime(stop_date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                    print(f"📅 Stop date set to: {stop_date.date()}")
+                except ValueError:
+                    print("⚠️ تنبيه: تنسيق STOP_DATE غير صحيح! استخدم YYYY-MM-DD.")
+
             # الانضمام للقناة
             entity = await self.client.get_entity(channel_link)
             print(f"🔍 Scraping channel: {entity.title}")
 
-            # جلب آخر الرسائل
-            async for message in self.client.iter_messages(entity, limit=limit):
+            # جلب الرسائل
+            async for message in self.client.iter_messages(entity):
+                # وقف لو التاريخ أقدم من الحد المحدد
+                if stop_date and message.date < stop_date:
+                    print(f"⏹️ Stopped at {message.date}")
+                    break
+
                 await self.process_message(message)
                 await asyncio.sleep(0.5)  # تجنب Rate limiting
 
