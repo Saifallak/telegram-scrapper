@@ -43,32 +43,40 @@ class TelegramProductScraper:
         self.products = []
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
-        """استخراج السعر من النص"""
+        """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
+        # جميع الأنماط الممكنة لاستخراج السعر
         price_patterns = [
-            r'(\d+(?:\.\d+)?)\s*جنيه',
-            r'(\d+(?:\.\d+)?)\s*ج\.م',
-            r'(\d+(?:\.\d+)?)\s*LE',
+            r'(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|LE)',
             r'السعر[:\s]+(\d+(?:\.\d+)?)',
             r'بسعر[:\s]+(\d+(?:\.\d+)?)',
-            r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)',
+            r'بـ(\d+(?:\.\d+)?)',
+            r'(\d+(?:\.\d+)?)\s*ج',  # زي 199ج أو 220ج
         ]
+
+        all_prices = set()
+
+        for pattern in price_patterns:
+            for match in re.findall(pattern, text):
+                try:
+                    all_prices.add(float(match))
+                except ValueError:
+                    pass
 
         prices = {
             'current_price': None,
             'old_price': None
         }
 
-        # البحث عن "بدلا من" للسعر القديم
-        old_price_match = re.search(r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)', text)
-        if old_price_match:
-            prices['old_price'] = float(old_price_match.group(1))
+        if all_prices:
+            prices['current_price'] = min(all_prices)
+            if len(all_prices) > 1:
+                prices['old_price'] = max(all_prices)
 
-        # البحث عن السعر الحالي
-        for pattern in price_patterns:
-            match = re.search(pattern, text)
-            if match and 'بدلا من' not in pattern:
+        # fallback بسيط لو مفيش أي نمط معروف
+        if not prices['current_price']:
+            match = re.search(r'(\d+(?:\.\d+)?)', text)
+            if match:
                 prices['current_price'] = float(match.group(1))
-                break
 
         return prices
 
