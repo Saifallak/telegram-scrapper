@@ -19,18 +19,18 @@ PHONE = os.getenv('TELEGRAM_PHONE')
 BACKEND_URL = os.getenv('BACKEND_URL', '')
 
 # قنوات التليجرام
-CHANNELS = [
-    'https://t.me/+VAkpot4taw_v9n2p',  # ادوات منزلية
-    'https://t.me/+UbRrLCJUETxcZmWJ',  # لعب اطفال
-    'https://t.me/+TQHOHpqeFZ4a2Lmp',  # مستحضرات تجميل
-    'https://t.me/+T1hjkvhugV4GxRYD',  # ملابس داخلية
-    'https://t.me/+Tx6OTiWMi6WS4Y2j',  # مفروشات
-    'https://t.me/+Sbbi6_lLOI2_wP41',  # شرابات
-    'https://t.me/+R5rjl2_-KV3GWYAr',  # هوم وير ولانجيري
-    'https://t.me/+WQ-FJCIwbKrcw2qC',  # ملابس اطفال
-    'https://t.me/+SSyWF7Ya89yPm2_V',  # اكسسوارات
-    'https://t.me/+TsQpYNpBaoRkz-8h',  # تصفيات
-]
+CHANNELS = {
+    'https://t.me/+VAkpot4taw_v9n2p': 'ادوات منزلية',
+    'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب اطفال',
+    'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات تجميل',
+    'https://t.me/+T1hjkvhugV4GxRYD': 'ملابس داخلية',
+    'https://t.me/+Tx6OTiWMi6WS4Y2j': 'مفروشات',
+    'https://t.me/+Sbbi6_lLOI2_wP41': 'شرابات',
+    'https://t.me/+R5rjl2_-KV3GWYAr': 'هوم وير ولانجيري',
+    'https://t.me/+WQ-FJCIwbKrcw2qC': 'ملابس اطفال',
+    'https://t.me/+SSyWF7Ya89yPm2_V': 'اكسسوارات',
+    'https://t.me/+TsQpYNpBaoRkz-8h': 'تصفيات',
+}
 
 
 class TelegramProductScraper:
@@ -158,13 +158,11 @@ class TelegramProductScraper:
         except Exception as e:
             print(f"Error sending to backend: {e}")
 
-    async def process_message(self, message):
+    async def process_message(self, message, channel_name: str = None):
         """معالجة رسالة واحدة"""
-        # تجاهل الرسائل اللي مافيهاش نص أو مافيهاش وسائط (لازم الاتنين مع بعض)
         if not message.text or not message.media:
             return
 
-        # 🆔 إنشاء ID فريد للمنتج من القناة والرسالة
         unique_id = f"{message.chat_id}_{message.id}"
 
         product = {
@@ -172,6 +170,7 @@ class TelegramProductScraper:
             'channel_id': message.chat_id,
             'message_id': message.id,
             'timestamp': message.date.isoformat(),
+            'channel_name': channel_name,  # 🟢 هنا بيتضاف اسم القناة
             'description': message.text or '',
             'images': [],
             'prices': {'current_price': None, 'old_price': None}
@@ -212,19 +211,22 @@ class TelegramProductScraper:
                 except ValueError:
                     print("⚠️ تنبيه: تنسيق STOP_DATE غير صحيح! استخدم YYYY-MM-DD.")
 
+            # اسم القناة المخصص من الـ dict
+            channel_name = CHANNELS.get(channel_link, 'قناة غير معروفة')
+
             # الانضمام للقناة
             entity = await self.client.get_entity(channel_link)
-            print(f"🔍 Scraping channel: {entity.title}")
+            print(f"🔍 Scraping channel: {entity.title} ({channel_name})")
 
             # جلب الرسائل
             async for message in self.client.iter_messages(entity):
-                # وقف لو التاريخ أقدم من الحد المحدد
                 if stop_date and message.date < stop_date:
                     print(f"⏹️ Stopped at {message.date}")
                     break
 
-                await self.process_message(message)
-                await asyncio.sleep(0.5)  # تجنب Rate limiting
+                # نمرر اسم القناة للمنتج
+                await self.process_message(message, channel_name)
+                await asyncio.sleep(0.5)
 
         except Exception as e:
             print(f"Error scraping channel {channel_link}: {e}")
