@@ -12,6 +12,8 @@ from typing import List, Dict, Optional
 
 load_dotenv()
 
+print("🚀 Scraper started...", flush=True)
+
 # Telegram API credentials
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
