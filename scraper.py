@@ -24,7 +24,7 @@ print("ENV DEBUG:", API_ID, API_HASH, PHONE, flush=True)
 
 # قنوات التليجرام
 CHANNELS = {
-    'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
+    # 'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
     'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
     'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
     # 'https://t.me/+T1hjkvhugV4GxRYD': 'ملابس داخلية',
@@ -213,23 +213,89 @@ class TelegramProductScraper:
         except Exception as e:
             print(f"Error sending to backend: {e}")
 
-    async def process_message(self, message, channel_name: str = None):
-        """معالجة رسالة واحدة"""
-        if not message.text:
-            return  # لازم يكون فيه نص
+    async def collect_previous_media(self, entity, message, max_lookback=20):
+        """جمع الصور/الفيديوهات من الرسائل السابقة اللي بدون نص"""
+        media_list = []
+        chat_id = message.chat_id
 
-        # نتأكد من وجود أي ميديا (صورة أو فيديو أو document)
-        if not (getattr(message.media, 'photo', None) or
-                getattr(message.media, 'document', None) or
-                getattr(message.media, 'video', None)):
-            print(f"⚠️ Skipping message without media: {message.text[:50]}...")
+        try:
+            # نشوف الأول لو عندنا cache
+            if chat_id in self.message_cache:
+                # نجيب الرسائل من الـ cache
+                for msg_id in range(message.id - 1, max(message.id - max_lookback - 1, 0), -1):
+                    if msg_id in self.message_cache[chat_id]:
+                        prev_msg = self.message_cache[chat_id][msg_id]
+
+                        # لو الرسالة فيها نص، نوقف
+                        if prev_msg.text and prev_msg.text.strip():
+                            break
+
+                        # لو فيها ميديا، نضيفها
+                        if (getattr(prev_msg.media, 'photo', None) or
+                                getattr(prev_msg.media, 'document', None) or
+                                getattr(prev_msg.media, 'video', None)):
+                            media_list.append(prev_msg)
+            else:
+                # لو مفيش cache، نجيب من التليجرام
+                async for prev_msg in self.client.iter_messages(
+                        entity,
+                        offset_id=message.id,
+                        limit=max_lookback
+                ):
+                    # نضيف للـ cache
+                    if chat_id not in self.message_cache:
+                        self.message_cache[chat_id] = {}
+                    self.message_cache[chat_id][prev_msg.id] = prev_msg
+
+                    # لو الرسالة فيها نص، نوقف
+                    if prev_msg.text and prev_msg.text.strip():
+                        break
+
+                    # لو فيها ميديا، نضيفها
+                    if (getattr(prev_msg.media, 'photo', None) or
+                            getattr(prev_msg.media, 'document', None) or
+                            getattr(prev_msg.media, 'video', None)):
+                        media_list.append(prev_msg)
+
+        except Exception as e:
+            print(f"⚠️ Error collecting previous media: {e}")
+
+        # نرتبها من الأقدم للأحدث
+        return list(reversed(media_list))
+
+    async def process_message(self, message, channel_name: str = None, entity=None):
+        """معالجة رسالة واحدة"""
+        chat_id = message.chat_id
+        unique_id = f"{chat_id}_{message.id}"
+
+        # تجنب معالجة نفس الرسالة مرتين
+        if unique_id in self.processed_messages:
             return
 
-        unique_id = f"{message.chat_id}_{message.id}"
+        # نضيف الرسالة للـ cache
+        if chat_id not in self.message_cache:
+            self.message_cache[chat_id] = {}
+        self.message_cache[chat_id][message.id] = message
+
+        # لو الرسالة بدون نص، نضيفها للـ pending ونستنى
+        if not message.text or not message.text.strip():
+            if chat_id not in self.pending_media:
+                self.pending_media[chat_id] = []
+
+            # نضيف بس لو فيها ميديا
+            if (getattr(message.media, 'photo', None) or
+                    getattr(message.media, 'document', None) or
+                    getattr(message.media, 'video', None)):
+                self.pending_media[chat_id].append(message)
+                print(f"📸 Media buffered: {len(self.pending_media[chat_id])} pending")
+            return
+
+        # لو وصلنا هنا، يعني الرسالة فيها نص
+        self.processed_messages.add(unique_id)
 
         product = {
             'unique_id': unique_id,
-            'channel_id': message.chat_id,
+            'channel_id': chat_id,
             'message_id': message.id,
             'timestamp': message.date.isoformat(),
             'channel_name': channel_name,
@@ -254,14 +320,46 @@ class TelegramProductScraper:
         # استخراج الأسعار
         product['prices'] = self.extract_price(message.text)
 
-        # تحميل الميديا (صورة أو فيديو أو document)
-        media_path = await self.download_image(message, 0)
-        if media_path:
-            product['images'].append(media_path)
+        # 🆕 أولاً: نجمع الميديا من الـ pending buffer
+        if chat_id in self.pending_media and self.pending_media[chat_id]:
+            print(f"🔗 Collecting {len(self.pending_media[chat_id])} buffered media")
+            for idx, pending_msg in enumerate(self.pending_media[chat_id]):
+                media_path = await self.download_image(pending_msg, idx)
+                if media_path:
+                    product['images'].append(media_path)
+                # نعلمها كـ processed
+                self.processed_messages.add(f"{chat_id}_{pending_msg.id}")
+
+            # ننضف الـ buffer
+            self.pending_media[chat_id] = []
+
+        # ثانياً: نجمع الميديا من الرسائل السابقة (للـ history mode)
+        if entity:
+            prev_media_messages = await self.collect_previous_media(entity, message)
+            if prev_media_messages:
+                print(f"🔍 Found {len(prev_media_messages)} previous media messages")
+
+                # تحميل الميديا من الرسائل السابقة
+                for prev_msg in prev_media_messages:
+                    prev_unique_id = f"{chat_id}_{prev_msg.id}"
+                    # نتأكد إننا ما حملناهاش قبل كده
+                    if prev_unique_id not in self.processed_messages:
+                        media_path = await self.download_image(prev_msg, len(product['images']))
+                        if media_path:
+                            product['images'].append(media_path)
+                        self.processed_messages.add(prev_unique_id)
+
+        # ثالثاً: تحميل الميديا من الرسالة الحالية (لو موجودة)
+        if (getattr(message.media, 'photo', None) or
+                getattr(message.media, 'document', None) or
+                getattr(message.media, 'video', None)):
+            media_path = await self.download_image(message, len(product['images']))
+            if media_path:
+                product['images'].append(media_path)
 
         # تجاهل المنتج لو مافيش ميديا فعلياً
         if not product['images']:
-            print(f"❌ Product skipped (no media downloaded): {product['name']}")
+            print(f"❌ Product skipped (no media): {product['name']}")
             return
 
         # حفظ البيانات محلياً
@@ -270,7 +368,8 @@ class TelegramProductScraper:
         # إرسال المنتج للـ backend
         await self.send_to_backend(product)
 
-        print(f"📦 Product processed: {product['description'][:50]}... | Price: {product['prices']['current_price']}")
+        print(
+            f"📦 Product processed: {product['name'][:50]} | {len(product['images'])} images | Price: {product['prices']['current_price']}")
 
     async def scrape_channel_history(self, channel_link: str):
         """سكرابينج تاريخ القناة حتى تاريخ محدد"""
