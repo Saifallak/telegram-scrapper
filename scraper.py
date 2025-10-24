@@ -81,25 +81,44 @@ class TelegramProductScraper:
         return prices
 
     async def download_image(self, message, index: int) -> Optional[str]:
-        """تحميل الصورة وحفظها محلياً (مع التحقق من وجودها مسبقاً)"""
+        """تحميل الصورة/الفيديو/المستند وحفظه بالامتداد الصحيح"""
         try:
-            photo_dir = 'downloaded_images'
-            os.makedirs(photo_dir, exist_ok=True)
+            media_dir = 'downloaded_images'
+            os.makedirs(media_dir, exist_ok=True)
 
-            filename = f"{photo_dir}/product_{message.chat_id}_{message.id}_{index}.jpg"
+            ext = 'unknown'
 
-            # ✅ لو الصورة متحملة قبل كده، نتخطى التحميل
+            # الصور
+            if getattr(message.media, 'photo', None):
+                ext = 'jpg'
+            # المستندات أو الفيديوهات
+            elif getattr(message.media, 'document', None) and hasattr(message.media.document, 'mime_type'):
+                mime = message.media.document.mime_type
+                if 'png' in mime:
+                    ext = 'png'
+                elif 'gif' in mime:
+                    ext = 'gif'
+                elif 'jpeg' in mime:
+                    ext = 'jpg'
+                elif 'mp4' in mime:
+                    ext = 'mp4'
+                elif 'webp' in mime:
+                    ext = 'webp'
+                else:
+                    ext = mime.split('/')[-1]  # fallback لأي نوع آخر
+
+            filename = f"{media_dir}/product_{message.chat_id}_{message.id}_{index}.{ext}"
+
             if os.path.exists(filename):
                 print(f"🟡 Skipping download (already exists): {filename}")
                 return filename
 
-            # تحميل الصورة من تليجرام
             await message.download_media(file=filename)
-            print(f"📥 Downloaded new image: {filename}")
+            print(f"📥 Downloaded new media: {filename}")
             return filename
 
         except Exception as e:
-            print(f"Error downloading image: {e}")
+            print(f"Error downloading media: {e}")
             return None
 
     async def send_to_backend(self, product_data: Dict):
@@ -125,14 +144,16 @@ class TelegramProductScraper:
                 form = aiohttp.FormData()
 
                 # الحقول النصية
+                form.add_field('variants[0][sku]', product_data.get('unique_id', ''))
+                form.add_field('variants[0][barcode]', product_data.get('unique_id', ''))
+                form.add_field('variants[0][stock]', '10')
                 form.add_field('name[ar]', product_data.get('name', ''))
                 form.add_field('name[en]', product_data.get('name', ''))
                 form.add_field('description[ar]', product_data.get('description', ''))
                 form.add_field('description[en]', product_data.get('description', ''))
                 form.add_field('short_description[ar]', product_data.get('description', ''))
                 form.add_field('short_description[en]', product_data.get('description', ''))
-                form.add_field('category[name][ar]', product_data.get('channel_name', ''))
-                form.add_field('category[name][en]', product_data.get('channel_name', ''))
+                form.add_field('category_name', product_data.get('channel_name', ''))
 
                 # الأسعار
                 prices = product_data.get('prices', {})
@@ -145,19 +166,24 @@ class TelegramProductScraper:
                 # رفع الصور/الفيديوهات كملفات
                 for media_path in product_data.get('images', []):
                     if os.path.exists(media_path):
-                        # تحديد نوع الميديا تلقائياً
-                        content_type = 'image/jpeg'  # default
-                        if getattr(product_data.get('media_type', None), 'photo', None):
+                        # تحديد نوع الميديا بناءً على امتداد الملف
+                        ext = os.path.splitext(media_path)[1].lower()
+                        if ext in ['.jpg', '.jpeg']:
                             content_type = 'image/jpeg'
-                        elif getattr(product_data.get('media_type', None), 'video', None):
+                        elif ext == '.png':
+                            content_type = 'image/png'
+                        elif ext == '.gif':
+                            content_type = 'image/gif'
+                        elif ext == '.webp':
+                            content_type = 'image/webp'
+                        elif ext == '.mp4':
                             content_type = 'video/mp4'
-                        elif getattr(product_data.get('media_type', None), 'document', None):
-                            content_type = 'application/octet-stream'
+                        else:
+                            content_type = None
 
-                        print(media_path)
-
-                        if content_type != 'image/jpeg':
-                            print(f"⚠️ Skipping Media: {media_path}")
+                        # إذا عايز تتخطى الفيديوهات
+                        if content_type is None or content_type.startswith('video/'):
+                            print(f"⚠️ Skipping media (unsupported type): {media_path}")
                             continue
 
                         form.add_field(
@@ -170,7 +196,8 @@ class TelegramProductScraper:
                 headers = {
                     'Authorization': f"Bearer {os.getenv('BACKEND_TOKEN', '')}",  # هنا تحط التوكن
                     'Accept': "application/json",
-                    'Tenant-Id' : "1", # "https://www.bepucepehutozy.me"
+                    'Tenant-Id': "7",  # "https://www.bepucepehutozy.me"
+                    'Referer': "https://rosyland.obranchy.com",
                 }
 
                 # إرسال البيانات
