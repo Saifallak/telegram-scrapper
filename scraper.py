@@ -416,6 +416,7 @@ class TelegramProductScraper:
 
     async def run(self, mode='history'):
         """تشغيل السكرابر"""
+        print("🔄 Connecting to Telegram...")
         await self.client.start(phone=PHONE)
         print("✅ Connected to Telegram")
 
