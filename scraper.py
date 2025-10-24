@@ -24,13 +24,13 @@ print("ENV DEBUG:", API_ID, API_HASH, PHONE, flush=True)
 
 # قنوات التليجرام
 CHANNELS = {
-    'https://t.me/+VAkpot4taw_v9n2p': 'ادوات منزلية',
-    'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب اطفال',
-    'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات تجميل',
+    'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
+    'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
+    'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
     'https://t.me/+T1hjkvhugV4GxRYD': 'ملابس داخلية',
     'https://t.me/+Tx6OTiWMi6WS4Y2j': 'مفروشات',
     'https://t.me/+Sbbi6_lLOI2_wP41': 'شرابات',
-    'https://t.me/+R5rjl2_-KV3GWYAr': 'هوم وير ولانجيري',
+    'https://t.me/+R5rjl2_-KV3GWYAr': 'ملابس البيت و اللانجيري',
     'https://t.me/+WQ-FJCIwbKrcw2qC': 'ملابس اطفال',
     'https://t.me/+SSyWF7Ya89yPm2_V': 'اكسسوارات',
     'https://t.me/+TsQpYNpBaoRkz-8h': 'تصفيات',
@@ -196,6 +196,7 @@ class TelegramProductScraper:
                 headers = {
                     'Authorization': f"Bearer {os.getenv('BACKEND_TOKEN', '')}",  # هنا تحط التوكن
                     'Accept': "application/json",
+                    'Accept-Language': "ar",
                     'Tenant-Id': "7",  # "https://www.bepucepehutozy.me"
                     'Referer': "https://rosyland.obranchy.com",
                 }
