@@ -155,7 +155,7 @@ class TelegramProductScraper:
                             content_type = 'application/octet-stream'
 
                         form.add_field(
-                            'images[]',
+                            'variants[0][images][]',
                             open(media_path, 'rb'),
                             filename=os.path.basename(media_path),
                             content_type=content_type
