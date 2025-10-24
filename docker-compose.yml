@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  telegram-scraper:
+    build: .
+    container_name: telegram_product_scraper
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./downloaded_images:/app/downloaded_images
+      - ./products.json:/app/products.json
+      - ./scraper_session.session:/app/scraper_session.session
+    networks:
+      - scraper-network
+    # للمراقبة المباشرة، استخدم:
+    # command: python scraper.py --mode live
+    
+  # Optional: Redis للـ Queue management
+  redis:
+    image: redis:7-alpine
+    container_name: telegram_redis
+    restart: unless-stopped
+    networks:
+      - scraper-network
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
+
+networks:
+  scraper-network:
+    driver: bridge
