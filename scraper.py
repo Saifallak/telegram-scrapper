@@ -161,8 +161,14 @@ class TelegramProductScraper:
                             content_type=content_type
                         )
 
+                headers = {
+                    'Authorization': f"Bearer {os.getenv('BACKEND_TOKEN', '')}",  # هنا تحط التوكن
+                    'Accept': "application/json",
+                    'Tenant-Id' : "1", # "https://www.bepucepehutozy.me"
+                }
+
                 # إرسال البيانات
-                async with session.post(BACKEND_URL, data=form) as resp:
+                async with session.post(BACKEND_URL, data=form, headers=headers) as resp:
                     resp_text = await resp.text()
                     if resp.status in [200, 201]:
                         print(f"✅ Product sent successfully: {product_data['name']}")
