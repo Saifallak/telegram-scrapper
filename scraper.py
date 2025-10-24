@@ -104,20 +104,17 @@ class TelegramProductScraper:
 
     async def send_to_backend(self, product_data: Dict):
         """إرسال البيانات للـ Backend أو حفظها محليًا لو BACKEND_URL فاضي"""
-        # ✅ لو الـ BACKEND_URL فاضي → نحفظ البيانات محليًا بدل الإرسال
         if not BACKEND_URL:
             print("⚠️ BACKEND_URL غير موجود في ملف .env — حفظ البيانات في offline_products.json بدل الإرسال.")
             try:
                 offline_file = 'offline_products.json'
 
-                # لو الملف موجود، نقرأ المحتوى الحالي
                 if os.path.exists(offline_file):
                     with open(offline_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                 else:
                     data = []
 
-                # 🧠 تحقق إن المنتج مش مكرر قبل الإضافة
                 if any(p['unique_id'] == product_data['unique_id'] for p in data):
                     print(f"⏭️ Product already exists locally: {product_data['unique_id']}")
                 else:
@@ -125,44 +122,48 @@ class TelegramProductScraper:
                     with open(offline_file, 'w', encoding='utf-8') as f:
                         json.dump(data, f, ensure_ascii=False, indent=2)
                     print(f"💾 Product saved locally: {product_data['description'][:50]}...")
-
             except Exception as e:
                 print(f"Error saving offline product: {e}")
             return
 
-        # ✅ الحالة العادية: إرسال للـ Backend
+        # ✅ الحالة العادية: إرسال للـ Backend مع رفع الصور كملفات
         try:
             async with aiohttp.ClientSession() as session:
-                # رفع الصور أولاً
-                image_urls = []
+                form = aiohttp.FormData()
+
+                # 🏷️ الحقول النصية الأساسية
+                form.add_field('name[ar]', product_data.get('name', ''))
+                form.add_field('name[en]', product_data.get('name', ''))
+                form.add_field('description[ar]', product_data.get('description', ''))
+                form.add_field('description[en]', product_data.get('description', ''))
+                form.add_field('short_description[ar]', product_data.get('description', ''))
+                form.add_field('short_description[en]', product_data.get('description', ''))
+                form.add_field('category[name][ar]', product_data.get('channel_name', ''))
+                form.add_field('category[name][en]', product_data.get('channel_name', ''))
+
+                # 💰 الأسعار
+                prices = product_data.get('prices', {})
+                if prices.get('old_price'):
+                    form.add_field('variants[0][price]', str(prices['old_price']))
+                    form.add_field('variants[0][discount]', str(prices['current_price']))
+                else:
+                    form.add_field('variants[0][price]', str(prices.get('current_price') or 0))
+
+                # 🖼️ رفع الصور كملفات
                 for image_path in product_data.get('images', []):
                     if os.path.exists(image_path):
-                        with open(image_path, 'rb') as f:
-                            form = aiohttp.FormData()
-                            form.add_field('file', f, filename=os.path.basename(image_path))
+                        form.add_field(
+                            'images[]',
+                            open(image_path, 'rb'),
+                            filename=os.path.basename(image_path),
+                            content_type='image/jpeg'
+                        )
 
-                            async with session.post(f"{BACKEND_URL}/upload", data=form) as resp:
-                                resp_text = await resp.text()
-                                if resp.status == 200:
-                                    result = await resp.json()
-                                    image_urls.append(result.get('url'))
-                                else:
-                                    print(f"⚠️ Upload failed ({resp.status}) for {image_path}")
-                                    print(f"🧾 Response: {resp_text}")
-
-                # تجهيز بيانات المنتج للإرسال
-                product_data['image_urls'] = image_urls
-                del product_data['images']
-
-                # 🟡 اطبع البيانات اللي هتتبعت للـ backend
-                print("\n📤 Sending product to backend:")
-                print(json.dumps(product_data, ensure_ascii=False, indent=2))
-
-                # إرسال بيانات المنتج
-                async with session.post(BACKEND_URL, json=product_data) as resp:
+                # 🚀 إرسال البيانات للـ API
+                async with session.post(BACKEND_URL, data=form) as resp:
                     resp_text = await resp.text()
-                    if resp.status == 201:
-                        print(f"✅ Product sent successfully: {product_data['description'][:50]}...")
+                    if resp.status in [200, 201]:
+                        print(f"✅ Product sent successfully: {product_data['name']}")
                     else:
                         print(f"❌ Failed to send product: {resp.status}")
                         print(f"🧾 Response: {resp_text}")
