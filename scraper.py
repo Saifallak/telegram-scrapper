@@ -103,35 +103,28 @@ class TelegramProductScraper:
             return None
 
     async def send_to_backend(self, product_data: Dict):
-        """إرسال البيانات للـ Backend أو حفظها محليًا لو BACKEND_URL فاضي"""
+        """إرسال البيانات للـ Backend مع رفع الصور/الفيديوهات كملفات"""
         if not BACKEND_URL:
-            print("⚠️ BACKEND_URL غير موجود في ملف .env — حفظ البيانات في offline_products.json بدل الإرسال.")
-            try:
-                offline_file = 'offline_products.json'
-
-                if os.path.exists(offline_file):
-                    with open(offline_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                else:
-                    data = []
-
-                if any(p['unique_id'] == product_data['unique_id'] for p in data):
-                    print(f"⏭️ Product already exists locally: {product_data['unique_id']}")
-                else:
-                    data.append(product_data)
-                    with open(offline_file, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    print(f"💾 Product saved locally: {product_data['description'][:50]}...")
-            except Exception as e:
-                print(f"Error saving offline product: {e}")
+            print("⚠️ BACKEND_URL غير موجود، حفظ البيانات محليًا.")
+            offline_file = 'offline_products.json'
+            data = []
+            if os.path.exists(offline_file):
+                with open(offline_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if any(p['unique_id'] == product_data['unique_id'] for p in data):
+                print(f"⏭️ Product already exists locally: {product_data['unique_id']}")
+            else:
+                data.append(product_data)
+                with open(offline_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                print(f"💾 Product saved locally: {product_data['name']}")
             return
 
-        # ✅ الحالة العادية: إرسال للـ Backend مع رفع الصور كملفات
         try:
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
 
-                # 🏷️ الحقول النصية الأساسية
+                # الحقول النصية
                 form.add_field('name[ar]', product_data.get('name', ''))
                 form.add_field('name[en]', product_data.get('name', ''))
                 form.add_field('description[ar]', product_data.get('description', ''))
@@ -141,7 +134,7 @@ class TelegramProductScraper:
                 form.add_field('category[name][ar]', product_data.get('channel_name', ''))
                 form.add_field('category[name][en]', product_data.get('channel_name', ''))
 
-                # 💰 الأسعار
+                # الأسعار
                 prices = product_data.get('prices', {})
                 if prices.get('old_price'):
                     form.add_field('variants[0][price]', str(prices['old_price']))
@@ -149,17 +142,26 @@ class TelegramProductScraper:
                 else:
                     form.add_field('variants[0][price]', str(prices.get('current_price') or 0))
 
-                # 🖼️ رفع الصور كملفات
-                for image_path in product_data.get('images', []):
-                    if os.path.exists(image_path):
+                # رفع الصور/الفيديوهات كملفات
+                for media_path in product_data.get('images', []):
+                    if os.path.exists(media_path):
+                        # تحديد نوع الميديا تلقائياً
+                        content_type = 'image/jpeg'  # default
+                        if getattr(product_data.get('media_type', None), 'photo', None):
+                            content_type = 'image/jpeg'
+                        elif getattr(product_data.get('media_type', None), 'video', None):
+                            content_type = 'video/mp4'
+                        elif getattr(product_data.get('media_type', None), 'document', None):
+                            content_type = 'application/octet-stream'
+
                         form.add_field(
                             'images[]',
-                            open(image_path, 'rb'),
-                            filename=os.path.basename(image_path),
-                            content_type='image/jpeg'
+                            open(media_path, 'rb'),
+                            filename=os.path.basename(media_path),
+                            content_type=content_type
                         )
 
-                # 🚀 إرسال البيانات للـ API
+                # إرسال البيانات
                 async with session.post(BACKEND_URL, data=form) as resp:
                     resp_text = await resp.text()
                     if resp.status in [200, 201]:
@@ -173,7 +175,14 @@ class TelegramProductScraper:
 
     async def process_message(self, message, channel_name: str = None):
         """معالجة رسالة واحدة"""
-        if not message.text or not message.media:
+        if not message.text:
+            return  # لازم يكون فيه نص
+
+        # نتأكد من وجود أي ميديا (صورة أو فيديو أو document)
+        if not (getattr(message.media, 'photo', None) or
+                getattr(message.media, 'document', None) or
+                getattr(message.media, 'video', None)):
+            print(f"⚠️ Skipping message without media: {message.text[:50]}...")
             return
 
         unique_id = f"{message.chat_id}_{message.id}"
@@ -183,16 +192,15 @@ class TelegramProductScraper:
             'channel_id': message.chat_id,
             'message_id': message.id,
             'timestamp': message.date.isoformat(),
-            'channel_name': channel_name,  # 🟢 هنا بيتضاف اسم القناة
+            'channel_name': channel_name,
             'description': message.text or '',
             'images': [],
             'prices': {'current_price': None, 'old_price': None}
         }
 
-        # استخراج اسم المنتج من أول أو ثاني سطر
+        # استخراج الاسم
         text = message.text.strip()
         lines = text.splitlines()
-
         if lines:
             first_line = lines[0].strip()
             if re.search(r'\bوصل\b', first_line):
@@ -201,28 +209,25 @@ class TelegramProductScraper:
                 name = first_line
         else:
             name = ""
-
         product['name'] = name
 
         # استخراج الأسعار
-        if message.text:
-            product['prices'] = self.extract_price(message.text)
+        product['prices'] = self.extract_price(message.text)
 
-        # تحميل الصور
-        if message.media:
-            if isinstance(message.media, MessageMediaPhoto):
-                image_path = await self.download_image(message, 0)
-                if image_path:
-                    product['images'].append(image_path)
-            elif hasattr(message.media, 'photo'):
-                image_path = await self.download_image(message, 0)
-                if image_path:
-                    product['images'].append(image_path)
+        # تحميل الميديا (صورة أو فيديو أو document)
+        media_path = await self.download_image(message, 0)
+        if media_path:
+            product['images'].append(media_path)
+
+        # تجاهل المنتج لو مافيش ميديا فعلياً
+        if not product['images']:
+            print(f"❌ Product skipped (no media downloaded): {product['name']}")
+            return
 
         # حفظ البيانات محلياً
         self.products.append(product)
 
-        # إرسال أو حفظ المنتج
+        # إرسال المنتج للـ backend
         await self.send_to_backend(product)
 
         print(f"📦 Product processed: {product['description'][:50]}... | Price: {product['prices']['current_price']}")
