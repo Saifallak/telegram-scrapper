@@ -1,2 +1,4 @@
 scraper_session.session
 .env
+offline_products.json
+scraper_session.session-journal

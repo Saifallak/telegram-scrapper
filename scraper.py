@@ -1,13 +1,13 @@
+import aiohttp
+import asyncio
+import json
 import os
 import re
-import json
-import asyncio
 from datetime import datetime
-from typing import List, Dict, Optional
+from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaPhoto
-import aiohttp
-from dotenv import load_dotenv
+from typing import List, Dict, Optional
 
 load_dotenv()
 
@@ -15,7 +15,7 @@ load_dotenv()
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
-BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000/api/products')
+BACKEND_URL = os.getenv('BACKEND_URL', '')
 
 # قنوات التليجرام
 CHANNELS = [
@@ -31,11 +31,12 @@ CHANNELS = [
     'https://t.me/+TsQpYNpBaoRkz-8h',  # تصفيات
 ]
 
+
 class TelegramProductScraper:
     def __init__(self):
         self.client = TelegramClient('scraper_session', API_ID, API_HASH)
         self.products = []
-        
+
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج السعر من النص"""
         price_patterns = [
@@ -43,37 +44,38 @@ class TelegramProductScraper:
             r'(\d+(?:\.\d+)?)\s*ج\.م',
             r'(\d+(?:\.\d+)?)\s*LE',
             r'السعر[:\s]+(\d+(?:\.\d+)?)',
+            r'بسعر[:\s]+(\d+(?:\.\d+)?)',
             r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)',
         ]
-        
+
         prices = {
             'current_price': None,
             'old_price': None
         }
-        
+
         # البحث عن "بدلا من" للسعر القديم
         old_price_match = re.search(r'بد(?:لاً|لا)\s+من\s+(\d+(?:\.\d+)?)', text)
         if old_price_match:
             prices['old_price'] = float(old_price_match.group(1))
-        
+
         # البحث عن السعر الحالي
         for pattern in price_patterns:
             match = re.search(pattern, text)
             if match and 'بدلا من' not in pattern:
                 prices['current_price'] = float(match.group(1))
                 break
-        
+
         return prices
-    
+
     async def download_image(self, message, index: int) -> Optional[str]:
         """تحميل الصورة وحفظها محلياً"""
         try:
             photo_dir = 'downloaded_images'
             os.makedirs(photo_dir, exist_ok=True)
-            
+
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"{photo_dir}/product_{message.id}_{index}_{timestamp}.jpg"
-            
+
             await message.download_media(file=filename)
             return filename
         except Exception as e:
@@ -81,7 +83,34 @@ class TelegramProductScraper:
             return None
 
     async def send_to_backend(self, product_data: Dict):
-        """إرسال البيانات للـ Backend"""
+        """إرسال البيانات للـ Backend أو حفظها محليًا لو BACKEND_URL فاضي"""
+        # ✅ لو الـ BACKEND_URL فاضي → نحفظ البيانات محليًا بدل الإرسال
+        if not BACKEND_URL:
+            print("⚠️ BACKEND_URL غير موجود في ملف .env — حفظ البيانات في offline_products.json بدل الإرسال.")
+            try:
+                offline_file = 'offline_products.json'
+
+                # لو الملف موجود، نقرأ المحتوى الحالي
+                if os.path.exists(offline_file):
+                    with open(offline_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                else:
+                    data = []
+
+                # 🧠 تحقق إن المنتج مش مكرر قبل الإضافة
+                if any(p['unique_id'] == product_data['unique_id'] for p in data):
+                    print(f"⏭️ Product already exists locally: {product_data['unique_id']}")
+                else:
+                    data.append(product_data)
+                    with open(offline_file, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    print(f"💾 Product saved locally: {product_data['description'][:50]}...")
+
+            except Exception as e:
+                print(f"Error saving offline product: {e}")
+            return
+
+        # ✅ الحالة العادية: إرسال للـ Backend
         try:
             async with aiohttp.ClientSession() as session:
                 # رفع الصور أولاً
@@ -120,13 +149,18 @@ class TelegramProductScraper:
 
         except Exception as e:
             print(f"Error sending to backend: {e}")
-    
+
     async def process_message(self, message):
         """معالجة رسالة واحدة"""
-        if not message.text and not message.media:
+        # تجاهل الرسائل اللي مافيهاش نص أو مافيهاش وسائط (لازم الاتنين مع بعض)
+        if not message.text or not message.media:
             return
-        
+
+        # 🆔 إنشاء ID فريد للمنتج من القناة والرسالة
+        unique_id = f"{message.chat_id}_{message.id}"
+
         product = {
+            'unique_id': unique_id,
             'channel_id': message.chat_id,
             'message_id': message.id,
             'timestamp': message.date.isoformat(),
@@ -134,11 +168,11 @@ class TelegramProductScraper:
             'images': [],
             'prices': {'current_price': None, 'old_price': None}
         }
-        
+
         # استخراج الأسعار
         if message.text:
             product['prices'] = self.extract_price(message.text)
-        
+
         # تحميل الصور
         if message.media:
             if isinstance(message.media, MessageMediaPhoto):
@@ -149,68 +183,70 @@ class TelegramProductScraper:
                 image_path = await self.download_image(message, 0)
                 if image_path:
                     product['images'].append(image_path)
-        
+
         # حفظ البيانات محلياً
         self.products.append(product)
-        
-        # إرسال للـ Backend
+
+        # إرسال أو حفظ المنتج
         await self.send_to_backend(product)
-        
+
         print(f"📦 Product processed: {product['description'][:50]}... | Price: {product['prices']['current_price']}")
-    
+
     async def scrape_channel_history(self, channel_link: str, limit: int = 100):
         """سكرابينج تاريخ القناة"""
         try:
             # الانضمام للقناة
             entity = await self.client.get_entity(channel_link)
             print(f"🔍 Scraping channel: {entity.title}")
-            
+
             # جلب آخر الرسائل
             async for message in self.client.iter_messages(entity, limit=limit):
                 await self.process_message(message)
                 await asyncio.sleep(0.5)  # تجنب Rate limiting
-                
+
         except Exception as e:
             print(f"Error scraping channel {channel_link}: {e}")
-    
+
     async def start_live_monitoring(self):
         """مراقبة الرسائل الجديدة مباشرة"""
+
         @self.client.on(events.NewMessage(chats=CHANNELS))
         async def handler(event):
             print(f"🆕 New message received!")
             await self.process_message(event.message)
-        
+
         print("👀 Monitoring channels for new messages...")
         await self.client.run_until_disconnected()
-    
+
     async def run(self, mode='history', limit=100):
         """تشغيل السكرابر"""
         await self.client.start(phone=PHONE)
         print("✅ Connected to Telegram")
-        
+
         if mode == 'history':
             # سكرابينج التاريخ
             for channel in CHANNELS:
                 await self.scrape_channel_history(channel, limit)
-            
+
             # حفظ البيانات في ملف JSON
             with open('products.json', 'w', encoding='utf-8') as f:
                 json.dump(self.products, f, ensure_ascii=False, indent=2)
-            
+
             print(f"\n✅ Scraped {len(self.products)} products")
             print("📁 Data saved to products.json")
-            
+
         elif mode == 'live':
             # المراقبة المباشرة
             await self.start_live_monitoring()
 
+
 # الاستخدام
 if __name__ == '__main__':
     scraper = TelegramProductScraper()
-    
+
     # اختر الوضع:
     # 'history' - لسكرابينج الرسائل القديمة
     # 'live' - للمراقبة المباشرة للرسائل الجديدة
-    
+
     asyncio.run(scraper.run(mode='history', limit=100))
     # asyncio.run(scraper.run(mode='live'))
