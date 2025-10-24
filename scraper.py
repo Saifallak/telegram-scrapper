@@ -25,8 +25,8 @@ print("ENV DEBUG:", API_ID, API_HASH, PHONE, flush=True)
 # قنوات التليجرام
 CHANNELS = {
     # 'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
-    'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
-    'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
+    # 'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
+    # 'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
     # 'https://t.me/+T1hjkvhugV4GxRYD': 'ملابس داخلية',
     'https://t.me/+Tx6OTiWMi6WS4Y2j': 'مفروشات',
     'https://t.me/+Sbbi6_lLOI2_wP41': 'شرابات',
@@ -112,33 +112,33 @@ class TelegramProductScraper:
             filename = f"{media_dir}/product_{message.chat_id}_{message.id}_{index}.{ext}"
 
             if os.path.exists(filename):
-                print(f"🟡 Skipping download (already exists): {filename}")
+                print(f"🟡 Skipping download (already exists): {filename}", flush=True)
                 return filename
 
             await message.download_media(file=filename)
-            print(f"📥 Downloaded new media: {filename}")
+            print(f"📥 Downloaded new media: {filename}", flush=True)
             return filename
 
         except Exception as e:
-            print(f"Error downloading media: {e}")
+            print(f"Error downloading media: {e}", flush=True)
             return None
 
     async def send_to_backend(self, product_data: Dict):
         """إرسال البيانات للـ Backend مع رفع الصور/الفيديوهات كملفات"""
         if not BACKEND_URL:
-            print("⚠️ BACKEND_URL غير موجود، حفظ البيانات محليًا.")
+            print("⚠️ BACKEND_URL غير موجود، حفظ البيانات محليًا.", flush=True)
             offline_file = 'offline_products.json'
             data = []
             if os.path.exists(offline_file):
                 with open(offline_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
             if any(p['unique_id'] == product_data['unique_id'] for p in data):
-                print(f"⏭️ Product already exists locally: {product_data['unique_id']}")
+                print(f"⏭️ Product already exists locally: {product_data['unique_id']}", flush=True)
             else:
                 data.append(product_data)
                 with open(offline_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                print(f"💾 Product saved locally: {product_data['name']}")
+                print(f"💾 Product saved locally: {product_data['name']}", flush=True)
             return
 
         try:
@@ -185,7 +185,7 @@ class TelegramProductScraper:
 
                         # إذا عايز تتخطى الفيديوهات
                         if content_type is None or content_type.startswith('video/'):
-                            print(f"⚠️ Skipping media (unsupported type): {media_path}")
+                            print(f"⚠️ Skipping media (unsupported type): {media_path}", flush=True)
                             continue
 
                         form.add_field(
@@ -207,13 +207,13 @@ class TelegramProductScraper:
                 async with session.post(BACKEND_URL, data=form, headers=headers) as resp:
                     resp_text = await resp.text()
                     if resp.status in [200, 201]:
-                        print(f"✅ Product sent successfully: {product_data['name']}")
+                        print(f"✅ Product sent successfully: {product_data['name']}", flush=True)
                     else:
-                        print(f"❌ Failed to send product: {resp.status}")
-                        print(f"🧾 Response: {resp_text}")
+                        print(f"❌ Failed to send product: {resp.status}", flush=True)
+                        print(f"🧾 Response: {resp_text}", flush=True)
 
         except Exception as e:
-            print(f"Error sending to backend: {e}")
+            print(f"Error sending to backend: {e}", flush=True)
 
     async def collect_previous_media(self, entity, message, max_lookback=20):
         """جمع الصور/الفيديوهات من الرسائل السابقة اللي بدون نص"""
@@ -260,7 +260,7 @@ class TelegramProductScraper:
                         media_list.append(prev_msg)
 
         except Exception as e:
-            print(f"⚠️ Error collecting previous media: {e}")
+            print(f"⚠️ Error collecting previous media: {e}", flush=True)
 
         # نرتبها من الأقدم للأحدث
         return list(reversed(media_list))
@@ -289,7 +289,7 @@ class TelegramProductScraper:
                     getattr(message.media, 'document', None) or
                     getattr(message.media, 'video', None)):
                 self.pending_media[chat_id].append(message)
-                print(f"📸 Media buffered: {len(self.pending_media[chat_id])} pending")
+                print(f"📸 Media buffered: {len(self.pending_media[chat_id])} pending", flush=True)
             return
 
         # لو وصلنا هنا، يعني الرسالة فيها نص
@@ -324,7 +324,7 @@ class TelegramProductScraper:
 
         # 🆕 أولاً: نجمع الميديا من الـ pending buffer
         if chat_id in self.pending_media and self.pending_media[chat_id]:
-            print(f"🔗 Collecting {len(self.pending_media[chat_id])} buffered media")
+            print(f"🔗 Collecting {len(self.pending_media[chat_id])} buffered media", flush=True)
             for idx, pending_msg in enumerate(self.pending_media[chat_id]):
                 media_path = await self.download_image(pending_msg, idx)
                 if media_path:
@@ -339,7 +339,7 @@ class TelegramProductScraper:
         if entity:
             prev_media_messages = await self.collect_previous_media(entity, message)
             if prev_media_messages:
-                print(f"🔍 Found {len(prev_media_messages)} previous media messages")
+                print(f"🔍 Found {len(prev_media_messages)} previous media messages", flush=True)
 
                 # تحميل الميديا من الرسائل السابقة
                 for prev_msg in prev_media_messages:
@@ -361,7 +361,7 @@ class TelegramProductScraper:
 
         # تجاهل المنتج لو مافيش ميديا فعلياً
         if not product['images']:
-            print(f"❌ Product skipped (no media): {product['name']}")
+            print(f"❌ Product skipped (no media): {product['name']}", flush=True)
             return
 
         # حفظ البيانات محلياً
@@ -371,7 +371,7 @@ class TelegramProductScraper:
         await self.send_to_backend(product)
 
         print(
-            f"📦 Product processed: {product['name'][:50]} | {len(product['images'])} images | Price: {product['prices']['current_price']}")
+            f"📦 Product processed: {product['name'][:50]} | {len(product['images'])} images | Price: {product['prices']['current_price']}", flush=True)
 
     async def scrape_channel_history(self, channel_link: str):
         """سكرابينج تاريخ القناة حتى تاريخ محدد"""
@@ -381,21 +381,21 @@ class TelegramProductScraper:
             if stop_date_str:
                 try:
                     stop_date = datetime.strptime(stop_date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-                    print(f"📅 Stop date set to: {stop_date.date()}")
+                    print(f"📅 Stop date set to: {stop_date.date()}", flush=True)
                 except ValueError:
-                    print("⚠️ تنبيه: تنسيق STOP_DATE غير صحيح! استخدم YYYY-MM-DD.")
+                    print("⚠️ تنبيه: تنسيق STOP_DATE غير صحيح! استخدم YYYY-MM-DD.", flush=True)
 
             # اسم القناة المخصص من الـ dict
             channel_name = CHANNELS.get(channel_link, 'قناة غير معروفة')
 
             # الانضمام للقناة
             entity = await self.client.get_entity(channel_link)
-            print(f"🔍 Scraping channel: {entity.title} ({channel_name})")
+            print(f"🔍 Scraping channel: {entity.title} ({channel_name})", flush=True)
 
             # جلب الرسائل
             async for message in self.client.iter_messages(entity):
                 if stop_date and message.date < stop_date:
-                    print(f"⏹️ Stopped at {message.date}")
+                    print(f"⏹️ Stopped at {message.date}", flush=True)
                     break
 
                 # نمرر اسم القناة للمنتج
@@ -403,17 +403,17 @@ class TelegramProductScraper:
                 await asyncio.sleep(0.5)
 
         except Exception as e:
-            print(f"Error scraping channel {channel_link}: {e}")
+            print(f"Error scraping channel {channel_link}: {e}", flush=True)
 
     async def start_live_monitoring(self):
         """مراقبة الرسائل الجديدة مباشرة"""
 
         @self.client.on(events.NewMessage(chats=CHANNELS))
         async def handler(event):
-            print(f"🆕 New message received!")
+            print(f"🆕 New message received!", flush=True)
             await self.process_message(event.message)
 
-        print("👀 Monitoring channels for new messages...")
+        print("👀 Monitoring channels for new messages...", flush=True)
         await self.client.run_until_disconnected()
 
     async def run(self, mode='history'):
@@ -430,8 +430,8 @@ class TelegramProductScraper:
             with open('products.json', 'w', encoding='utf-8') as f:
                 json.dump(self.products, f, ensure_ascii=False, indent=2)
 
-            print(f"\n✅ Scraped {len(self.products)} products")
-            print("📁 Data saved to products.json")
+            print(f"\n✅ Scraped {len(self.products)} products", flush=True)
+            print("📁 Data saved to products.json", flush=True)
 
         elif mode == 'live':
             # المراقبة المباشرة فقط
@@ -442,10 +442,11 @@ class TelegramProductScraper:
             print("🌀 Hybrid mode: Scraping history first, then monitoring live...", flush=True)
 
             for channel in CHANNELS:
+                print(f"Start Fetching Channel ({channel} products).", flush=True)
                 await self.scrape_channel_history(channel)
 
-            print(f"\n✅ Finished scraping history ({len(self.products)} products).")
-            print("👀 Now switching to live monitoring...\n")
+            print(f"\n✅ Finished scraping history ({len(self.products)} products).", flush=True)
+            print("👀 Now switching to live monitoring...\n", flush=True)
 
             await self.start_live_monitoring()
 
