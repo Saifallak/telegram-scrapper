@@ -44,6 +44,10 @@ class TelegramProductScraper:
         print("✅ Client initialized", flush=True)
         self.products = []
 
+        self.processed_messages = set()  # لتخزين الرسائل المعالجة
+        self.pending_media = {}           # لتخزين الميديا المؤجلة
+        self.message_cache = {}           # لتخزين الرسائل السابقة لتسهيل البحث
+
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
         # جميع الأنماط الممكنة لاستخراج السعر
