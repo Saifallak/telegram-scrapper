@@ -188,6 +188,21 @@ class TelegramProductScraper:
             'prices': {'current_price': None, 'old_price': None}
         }
 
+        # استخراج اسم المنتج من أول أو ثاني سطر
+        text = message.text.strip()
+        lines = text.splitlines()
+
+        if lines:
+            first_line = lines[0].strip()
+            if re.search(r'\bوصل\b', first_line):
+                name = lines[1].strip() if len(lines) > 1 else first_line
+            else:
+                name = first_line
+        else:
+            name = ""
+
+        product['name'] = name
+
         # استخراج الأسعار
         if message.text:
             product['prices'] = self.extract_price(message.text)
