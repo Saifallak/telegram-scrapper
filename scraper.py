@@ -20,6 +20,8 @@ API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
 BACKEND_URL = os.getenv('BACKEND_URL', '')
 
+print("ENV DEBUG:", API_ID, API_HASH, PHONE, flush=True)
+
 # قنوات التليجرام
 CHANNELS = {
     'https://t.me/+VAkpot4taw_v9n2p': 'ادوات منزلية',
