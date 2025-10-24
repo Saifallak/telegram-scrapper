@@ -404,19 +404,19 @@ class TelegramProductScraper:
                     try:
                         me = await self.client.get_me()
                         await self.client(GetParticipantRequest(channel=entity, user_id=me.id))
-                        print(f"✅ Already a member of {entity.title} ({channel_name}), skipping join")
+                        print(f"✅ Already a member of {entity.title} ({channel_name}), skipping join", flush=True)
                     except UserNotParticipantError:
                         # لو مش عضو، انضم
                         try:
                             await self.client(JoinChannelRequest(entity))
-                            print(f"✅ Joined {entity.title} ({channel_name})")
+                            print(f"✅ Joined {entity.title} ({channel_name})", flush=True)
                         except UserAlreadyParticipantError:
-                            print(f"✅ Already joined {entity.title}")
+                            print(f"✅ Already joined {entity.title}", flush=True)
 
                     break  # تم الحصول على الـ entity بنجاح
 
                 except FloodWaitError as e:
-                    print(f"⏳ Flood wait: need to wait {e.seconds} seconds before retrying...")
+                    print(f"⏳ Flood wait: need to wait {e.seconds} seconds before retrying...", flush=True)
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
                     print(f"❌ Failed to get entity {channel_link}: {e}", flush=True)
