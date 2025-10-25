@@ -650,33 +650,42 @@ class GeminiExtractor:
         return None
 
     def _build_prompt(self, text: str, channel_name: str) -> str:
-        """Build extraction prompt"""
-        return f"""أنت خبير في استخراج بيانات المنتجات من رسائل التليجرام.
-استخرج المعلومات التالية من النص بدقة:
+        """
+        Builds the detailed extraction prompt for the Gemini model.
 
-النص:
-{text}
+        This prompt enforces strict formatting, handles price prioritization,
+        and includes explicit rules for generating unique and constrained descriptions.
+        """
 
-القناة: {channel_name}
+        # Define constraints outside the f-string for clarity and adherence to limits
+        MAX_SHORT_DESC_LEN = 180
 
-استخرج التالي بصيغة JSON:
-{{
-    "name": "اسم المنتج (السطر الأول عادة) مع حذف الاسعار منه",
-    "short_description": "وصف قصير (السطر الثاني عادة) مع حذف الاسعار منه لو مش موجود وصف قصير انشئه بحد اقصي ١٦٠ حرف",
-    "description": "الوصف الكامل (باقي النص عادة) مع حذف الاسعار منه لو مش موجود وصف انشئه بدون حد اقصي",
-    "current_price": رقم السعر الحالي أو null,
-    "old_price": السعر القديم إذا وُجد أو null
-}}
+        prompt = f"""أنت خبير في استخراج بيانات المنتجات من رسائل التليجرام.
+    استخرج المعلومات التالية من النص بدقة متناهية.
+    
+    النص:
+    {text}
+    
+    القناة: {channel_name}
+    
+    استخرج التالي بصيغة JSON:
+    {{
+        "name": "اسم المنتج الرئيسي (يُستخرج من السطر الأول عادة)، يجب أن يكون مختصراً ومباشراً، مع حذف أي أسعار أو وحدات قياس.",
+        "short_description": "وصف قصير ومميز للمنتج. **إلزامي ألا يتجاوز {MAX_SHORT_DESC_LEN} حرفاً**.\n\n**قواعد إنشاء الوصف القصير:**\n1. الأولوية للوصف القصير الأصلي (إذا كان موجوداً ولا يتجاوز {MAX_SHORT_DESC_LEN} حرفاً).\n2. إذا لم يُوجد أو كان طويلاً، يجب إنشاء وصف قصير **يختلف جوهرياً** عن الوصف الكامل (Description).\n3. إذا لم يمكن إنشاء وصف مختلف ومناسب، استخدم محتوى حقل 'name'.",
+        "description": "الوصف الكامل والمفصل للمنتج (يُستخرج من باقي النص عادة).\n\n**قواعد إنشاء الوصف الكامل:**\n1. الأولوية للوصف الكامل الأصلي.\n2. إذا لم يُوجد، استخدم الوصف القصير الذي تم إنشاؤه (Short_Description) أو حقل 'name'.",
+        "current_price": "رقم السعر الحالي (الأقل قيمة إذا وُجد سعران). يجب أن يكون بصيغة رقمية فقط (مثال: 150 أو 150.5). إذا لم يُوجد سعر، ضع null.",
+        "old_price": "رقم السعر القديم (الأعلى قيمة إذا وُجد سعران). يجب أن يكون بصيغة رقمية فقط (بدون أي عملات أو رموز). إذا كان السعر واحدًا أو لم يُوجد، ضع null."
+    }}
+    
+    **قواعد الاستخراج الإلزامية التي يجب الالتزام بها:**
+    - **صيغة الأسعار:** يجب أن تكون قيمتا current_price و old_price أرقاماً فقط (مثال: 70 أو 12.5). تجاهل أي عملات، رموز، أو كلمات (مثل "جنيه" أو "بسعر").
+    - **تجنب التكرار:** يجب أن يكون حقل 'short_description' مختلفاً عن 'description' قدر الإمكان.
+    - **تجنب الذكر الذاتي:** امسح أي ذكر لكلمة "اسم المنتج" من حقل "name".
+    - **تنظيف النص:** تجاهل جميع الإيموجي والرموز والمسافات غير الضرورية.
+    
+    **الإخراج المطلوب: أرجع JSON فقط بدون أي نص إضافي في الإخراج.**"""
 
-ملاحظات مهمة:
-- السعر يكون بصيغة رقمية فقط (مثال: 150 أو 150.5)
-- تجاهل الإيموجي والرموز
-- إذا كان هناك سعرين، الأقل هو current_price والأعلى old_price
-- إذا كان سعر واحد فقط، ضعه في current_price واترك old_price null
-- قد يكون السعر مكتوب: "150 جنيه" أو "بسعر 150" أو "السعر: 150 ج"
-- امسح أي ذكر لكلمة "اسم المنتج" من الاسم
-
-أرجع JSON فقط بدون أي نص إضافي."""
+        return prompt.strip()
 
     async def _call_api(self, prompt: str, model: str, api_key: str) -> Dict:
         """Call Gemini API with specified model and API key"""
@@ -1475,7 +1484,8 @@ class TelegramProductScraper:
         if self.gemini.api_keys:
             models_loaded = await self.gemini.fetch_available_models()
             if models_loaded:
-                Logger.success(f"Gemini AI enabled with {len(self.gemini.models)} model(s) and {len(self.gemini.api_keys)} API key(s)")
+                Logger.success(
+                    f"Gemini AI enabled with {len(self.gemini.models)} model(s) and {len(self.gemini.api_keys)} API key(s)")
             else:
                 Logger.warning("Failed to load Gemini models - using manual extraction")
                 self.gemini.enabled = False
