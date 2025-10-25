@@ -85,42 +85,55 @@ class TelegramProductScraper:
 
     async def download_image(self, message, index: int) -> Optional[str]:
         """تحميل الصورة/الفيديو/المستند وحفظه بالامتداد الصحيح"""
-        try:
-            media_dir = 'downloaded_images'
-            os.makedirs(media_dir, exist_ok=True)
+        media_dir = 'downloaded_images'
+        os.makedirs(media_dir, exist_ok=True)
 
-            ext = 'unknown'
+        ext = 'unknown'
 
-            if getattr(message.media, 'photo', None):
+        if getattr(message.media, 'photo', None):
+            ext = 'jpg'
+        elif getattr(message.media, 'document', None) and hasattr(message.media.document, 'mime_type'):
+            mime = message.media.document.mime_type
+            if 'png' in mime:
+                ext = 'png'
+            elif 'gif' in mime:
+                ext = 'gif'
+            elif 'jpeg' in mime:
                 ext = 'jpg'
-            elif getattr(message.media, 'document', None) and hasattr(message.media.document, 'mime_type'):
-                mime = message.media.document.mime_type
-                if 'png' in mime:
-                    ext = 'png'
-                elif 'gif' in mime:
-                    ext = 'gif'
-                elif 'jpeg' in mime:
-                    ext = 'jpg'
-                elif 'mp4' in mime:
-                    ext = 'mp4'
-                elif 'webp' in mime:
-                    ext = 'webp'
-                else:
-                    ext = mime.split('/')[-1]
+            elif 'mp4' in mime:
+                ext = 'mp4'
+            elif 'webp' in mime:
+                ext = 'webp'
+            else:
+                ext = mime.split('/')[-1]
 
-            filename = f"{media_dir}/product_{message.chat_id}_{message.id}_{index}.{ext}"
+        filename = f"{media_dir}/product_{message.chat_id}_{message.id}_{index}.{ext}"
 
-            if os.path.exists(filename):
-                print(f"🟡 Skipping download (already exists): {filename}", flush=True)
-                return filename
-
-            await message.download_media(file=filename)
-            print(f"📥 Downloaded new media: {filename}", flush=True)
+        if os.path.exists(filename):
+            print(f"🟡 Skipping download (already exists): {filename}", flush=True)
             return filename
 
-        except Exception as e:
-            print(f"Error downloading media: {e}", flush=True)
-            return None
+        # 🆕 حماية من FloodWaitError
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await message.download_media(file=filename)
+                print(f"📥 Downloaded new media: {filename}", flush=True)
+                return filename
+            except FloodWaitError as e:
+                if attempt < max_retries - 1:
+                    print(
+                        f"⏳ FloodWait during download: waiting {e.seconds} seconds... (attempt {attempt + 1}/{max_retries})",
+                        flush=True)
+                    await asyncio.sleep(e.seconds)
+                else:
+                    print(f"❌ Failed to download after {max_retries} attempts due to FloodWait", flush=True)
+                    return None
+            except Exception as e:
+                print(f"Error downloading media: {e}", flush=True)
+                return None
+
+        return None
 
     async def send_to_backend(self, product_data: Dict):
         """إرسال البيانات للـ Backend مع رفع الصور/الفيديوهات كملفات"""
@@ -227,22 +240,29 @@ class TelegramProductScraper:
                                 getattr(prev_msg.media, 'video', None)):
                             media_list.append(prev_msg)
             else:
-                async for prev_msg in self.client.iter_messages(
-                        entity,
-                        offset_id=message.id,
-                        limit=max_lookback
-                ):
-                    if chat_id not in self.message_cache:
-                        self.message_cache[chat_id] = {}
-                    self.message_cache[chat_id][prev_msg.id] = prev_msg
+                # 🆕 حماية من FloodWaitError
+                while True:
+                    try:
+                        async for prev_msg in self.client.iter_messages(
+                                entity,
+                                offset_id=message.id,
+                                limit=max_lookback
+                        ):
+                            if chat_id not in self.message_cache:
+                                self.message_cache[chat_id] = {}
+                            self.message_cache[chat_id][prev_msg.id] = prev_msg
 
-                    if prev_msg.text and prev_msg.text.strip():
-                        break
+                            if prev_msg.text and prev_msg.text.strip():
+                                break
 
-                    if (getattr(prev_msg.media, 'photo', None) or
-                            getattr(prev_msg.media, 'document', None) or
-                            getattr(prev_msg.media, 'video', None)):
-                        media_list.append(prev_msg)
+                            if (getattr(prev_msg.media, 'photo', None) or
+                                    getattr(prev_msg.media, 'document', None) or
+                                    getattr(prev_msg.media, 'video', None)):
+                                media_list.append(prev_msg)
+                        break  # نجحت العملية
+                    except FloodWaitError as e:
+                        print(f"⏳ FloodWait in collect_previous_media: waiting {e.seconds} seconds...", flush=True)
+                        await asyncio.sleep(e.seconds)
 
         except Exception as e:
             print(f"⚠️ Error collecting previous media: {e}", flush=True)
@@ -437,8 +457,16 @@ class TelegramProductScraper:
     async def run(self, mode='history'):
         """تشغيل السكرابر"""
         print("🔄 Connecting to Telegram...", flush=True)
-        await self.client.start(phone=PHONE)
-        print("✅ Connected to Telegram", flush=True)
+
+        # 🆕 حماية الاتصال من FloodWaitError
+        while True:
+            try:
+                await self.client.start(phone=PHONE)
+                print("✅ Connected to Telegram", flush=True)
+                break
+            except FloodWaitError as e:
+                print(f"⏳ FloodWait during connection: waiting {e.seconds} seconds...", flush=True)
+                await asyncio.sleep(e.seconds)
 
         if mode == 'history':
             for channel in CHANNELS:
@@ -453,11 +481,17 @@ class TelegramProductScraper:
         elif mode == 'live':
             # في الـ live mode، لازم نجيب الـ entities الأول
             for channel in CHANNELS:
-                try:
-                    entity = await self.client.get_entity(channel)
-                    self.channel_entities[entity.id] = (entity, CHANNELS[channel])
-                except Exception as e:
-                    print(f"❌ Failed to get entity for {channel}: {e}", flush=True)
+                while True:
+                    try:
+                        entity = await self.client.get_entity(channel)
+                        self.channel_entities[entity.id] = (entity, CHANNELS[channel])
+                        break
+                    except FloodWaitError as e:
+                        print(f"⏳ FloodWait getting entity for live mode: waiting {e.seconds} seconds...", flush=True)
+                        await asyncio.sleep(e.seconds)
+                    except Exception as e:
+                        print(f"❌ Failed to get entity for {channel}: {e}", flush=True)
+                        break
 
             await self.start_live_monitoring()
 
