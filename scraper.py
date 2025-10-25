@@ -306,16 +306,29 @@ class TelegramProductScraper:
         }
 
         text = message.text.strip()
-        lines = text.splitlines()
-        if lines:
-            first_line = lines[0].strip()
-            if re.search(r'\bوصل\b', first_line):
-                name = lines[1].strip() if len(lines) > 1 else first_line
-            else:
-                name = first_line
-        else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        # تحديد الاسم والوصف القصير والكبير
+        if len(lines) == 0:
             name = ""
-        product['name'] = name
+            short_desc = ""
+            long_desc = ""
+        elif len(lines) == 1:
+            name = lines[0]
+            short_desc = ""
+            long_desc = ""
+        elif len(lines) == 2:
+            name = lines[0]
+            short_desc = lines[1]
+            long_desc = ""
+        else:
+            name = lines[0]
+            short_desc = lines[1]
+            long_desc = "\n".join(lines[2:])
+
+        product['name'] = re.sub(r'(?i)\bاسم المنتج\b', '', name).strip()
+        product['description'] = long_desc  # الوصف الكبير
+        product['short_description'] = short_desc
 
         product['prices'] = self.extract_price(message.text)
 
