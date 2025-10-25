@@ -40,6 +40,7 @@ class Config:
     BACKEND_URL = os.getenv('BACKEND_URL', '')
     BACKEND_TOKEN = os.getenv('BACKEND_TOKEN', '')
     TENANT_ID = os.getenv('TENANT_ID', '7')
+    REFERER = os.getenv('REFERER', 'https://rosyland.obranchy.com')
 
     # AI
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
@@ -582,6 +583,7 @@ class BackendClient:
             'Accept': "application/json",
             'Accept-Language': "ar",
             'Tenant-Id': self.config.TENANT_ID,
+            'Referer': self.config.REFERER,
         }
 
     def _save_offline(self, product: ProductData):
