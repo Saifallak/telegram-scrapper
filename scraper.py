@@ -10,8 +10,6 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError, UserNotParticipantError
 from telethon.tl.functions.channels import JoinChannelRequest, GetParticipantRequest
-from telethon.tl.types import InputPeerChannel
-from telethon.tl.types import MessageMediaPhoto
 
 load_dotenv()
 
@@ -47,23 +45,23 @@ class TelegramProductScraper:
         print("✅ Client initialized", flush=True)
         self.products = []
 
-        self.processed_messages = set()  # لتخزين الرسائل المعالجة
-        self.pending_media = {}  # لتخزين الميديا المؤجلة
-        self.message_cache = {}  # لتخزين الرسائل السابقة لتسهيل البحث
+        # 🆕 للتعامل مع الميديا والرسائل
+        self.processed_messages = set()
+        self.pending_media = {}
+        self.message_cache = {}
+        self.channel_entities = {}  # للـ live mode
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
-        # جميع الأنماط الممكنة لاستخراج السعر
         price_patterns = [
             r'(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|LE)',
             r'السعر[:\s]+(\d+(?:\.\d+)?)',
             r'بسعر[:\s]+(\d+(?:\.\d+)?)',
             r'بـ(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*ج',  # زي 199ج أو 220ج
+            r'(\d+(?:\.\d+)?)\s*ج',
         ]
 
         all_prices = set()
-
         for pattern in price_patterns:
             for match in re.findall(pattern, text):
                 try:
@@ -71,17 +69,13 @@ class TelegramProductScraper:
                 except ValueError:
                     pass
 
-        prices = {
-            'current_price': None,
-            'old_price': None
-        }
+        prices = {'current_price': None, 'old_price': None}
 
         if all_prices:
             prices['current_price'] = min(all_prices)
             if len(all_prices) > 1:
                 prices['old_price'] = max(all_prices)
 
-        # fallback بسيط لو مفيش أي نمط معروف
         if not prices['current_price']:
             match = re.search(r'(\d+(?:\.\d+)?)', text)
             if match:
@@ -97,10 +91,8 @@ class TelegramProductScraper:
 
             ext = 'unknown'
 
-            # الصور
             if getattr(message.media, 'photo', None):
                 ext = 'jpg'
-            # المستندات أو الفيديوهات
             elif getattr(message.media, 'document', None) and hasattr(message.media.document, 'mime_type'):
                 mime = message.media.document.mime_type
                 if 'png' in mime:
@@ -114,7 +106,7 @@ class TelegramProductScraper:
                 elif 'webp' in mime:
                     ext = 'webp'
                 else:
-                    ext = mime.split('/')[-1]  # fallback لأي نوع آخر
+                    ext = mime.split('/')[-1]
 
             filename = f"{media_dir}/product_{message.chat_id}_{message.id}_{index}.{ext}"
 
@@ -152,7 +144,6 @@ class TelegramProductScraper:
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
 
-                # الحقول النصية
                 form.add_field('variants[0][sku]', product_data.get('unique_id', ''))
                 form.add_field('variants[0][barcode]', product_data.get('unique_id', ''))
                 form.add_field('variants[0][stock]', '10')
@@ -164,7 +155,6 @@ class TelegramProductScraper:
                 form.add_field('short_description[en]', product_data.get('description', ''))
                 form.add_field('category_name', product_data.get('channel_name', ''))
 
-                # الأسعار
                 prices = product_data.get('prices', {})
                 if prices.get('old_price'):
                     form.add_field('variants[0][price]', str(prices['old_price']))
@@ -172,10 +162,8 @@ class TelegramProductScraper:
                 else:
                     form.add_field('variants[0][price]', str(prices.get('current_price') or 0))
 
-                # رفع الصور/الفيديوهات كملفات
                 for media_path in product_data.get('images', []):
                     if os.path.exists(media_path):
-                        # تحديد نوع الميديا بناءً على امتداد الملف
                         ext = os.path.splitext(media_path)[1].lower()
                         if ext in ['.jpg', '.jpeg']:
                             content_type = 'image/jpeg'
@@ -190,7 +178,6 @@ class TelegramProductScraper:
                         else:
                             content_type = None
 
-                        # إذا عايز تتخطى الفيديوهات
                         if content_type is None or content_type.startswith('video/'):
                             print(f"⚠️ Skipping media (unsupported type): {media_path}", flush=True)
                             continue
@@ -203,14 +190,13 @@ class TelegramProductScraper:
                         )
 
                 headers = {
-                    'Authorization': f"Bearer {os.getenv('BACKEND_TOKEN', '')}",  # هنا تحط التوكن
+                    'Authorization': f"Bearer {os.getenv('BACKEND_TOKEN', '')}",
                     'Accept': "application/json",
                     'Accept-Language': "ar",
-                    'Tenant-Id': "7",  # "https://www.bepucepehutozy.me"
+                    'Tenant-Id': "7",
                     'Referer': "https://rosyland.obranchy.com",
                 }
 
-                # إرسال البيانات
                 async with session.post(BACKEND_URL, data=form, headers=headers) as resp:
                     resp_text = await resp.text()
                     if resp.status in [200, 201]:
@@ -228,39 +214,31 @@ class TelegramProductScraper:
         chat_id = message.chat_id
 
         try:
-            # نشوف الأول لو عندنا cache
             if chat_id in self.message_cache:
-                # نجيب الرسائل من الـ cache
                 for msg_id in range(message.id - 1, max(message.id - max_lookback - 1, 0), -1):
                     if msg_id in self.message_cache[chat_id]:
                         prev_msg = self.message_cache[chat_id][msg_id]
 
-                        # لو الرسالة فيها نص، نوقف
                         if prev_msg.text and prev_msg.text.strip():
                             break
 
-                        # لو فيها ميديا، نضيفها
                         if (getattr(prev_msg.media, 'photo', None) or
                                 getattr(prev_msg.media, 'document', None) or
                                 getattr(prev_msg.media, 'video', None)):
                             media_list.append(prev_msg)
             else:
-                # لو مفيش cache، نجيب من التليجرام
                 async for prev_msg in self.client.iter_messages(
                         entity,
                         offset_id=message.id,
                         limit=max_lookback
                 ):
-                    # نضيف للـ cache
                     if chat_id not in self.message_cache:
                         self.message_cache[chat_id] = {}
                     self.message_cache[chat_id][prev_msg.id] = prev_msg
 
-                    # لو الرسالة فيها نص، نوقف
                     if prev_msg.text and prev_msg.text.strip():
                         break
 
-                    # لو فيها ميديا، نضيفها
                     if (getattr(prev_msg.media, 'photo', None) or
                             getattr(prev_msg.media, 'document', None) or
                             getattr(prev_msg.media, 'video', None)):
@@ -269,7 +247,6 @@ class TelegramProductScraper:
         except Exception as e:
             print(f"⚠️ Error collecting previous media: {e}", flush=True)
 
-        # نرتبها من الأقدم للأحدث
         return list(reversed(media_list))
 
     async def process_message(self, message, channel_name: str = None, entity=None):
@@ -277,21 +254,17 @@ class TelegramProductScraper:
         chat_id = message.chat_id
         unique_id = f"{chat_id}_{message.id}"
 
-        # تجنب معالجة نفس الرسالة مرتين
         if unique_id in self.processed_messages:
             return
 
-        # نضيف الرسالة للـ cache
         if chat_id not in self.message_cache:
             self.message_cache[chat_id] = {}
         self.message_cache[chat_id][message.id] = message
 
-        # لو الرسالة بدون نص، نضيفها للـ pending ونستنى
         if not message.text or not message.text.strip():
             if chat_id not in self.pending_media:
                 self.pending_media[chat_id] = []
 
-            # نضيف بس لو فيها ميديا
             if (getattr(message.media, 'photo', None) or
                     getattr(message.media, 'document', None) or
                     getattr(message.media, 'video', None)):
@@ -299,7 +272,6 @@ class TelegramProductScraper:
                 print(f"📸 Media buffered: {len(self.pending_media[chat_id])} pending", flush=True)
             return
 
-        # لو وصلنا هنا، يعني الرسالة فيها نص
         self.processed_messages.add(unique_id)
 
         product = {
@@ -313,7 +285,6 @@ class TelegramProductScraper:
             'prices': {'current_price': None, 'old_price': None}
         }
 
-        # استخراج الاسم
         text = message.text.strip()
         lines = text.splitlines()
         if lines:
@@ -326,39 +297,31 @@ class TelegramProductScraper:
             name = ""
         product['name'] = name
 
-        # استخراج الأسعار
         product['prices'] = self.extract_price(message.text)
 
-        # 🆕 أولاً: نجمع الميديا من الـ pending buffer
         if chat_id in self.pending_media and self.pending_media[chat_id]:
             print(f"🔗 Collecting {len(self.pending_media[chat_id])} buffered media", flush=True)
             for idx, pending_msg in enumerate(self.pending_media[chat_id]):
                 media_path = await self.download_image(pending_msg, idx)
                 if media_path:
                     product['images'].append(media_path)
-                # نعلمها كـ processed
                 self.processed_messages.add(f"{chat_id}_{pending_msg.id}")
 
-            # ننضف الـ buffer
             self.pending_media[chat_id] = []
 
-        # ثانياً: نجمع الميديا من الرسائل السابقة (للـ history mode)
         if entity:
             prev_media_messages = await self.collect_previous_media(entity, message)
             if prev_media_messages:
                 print(f"🔍 Found {len(prev_media_messages)} previous media messages", flush=True)
 
-                # تحميل الميديا من الرسائل السابقة
                 for prev_msg in prev_media_messages:
                     prev_unique_id = f"{chat_id}_{prev_msg.id}"
-                    # نتأكد إننا ما حملناهاش قبل كده
                     if prev_unique_id not in self.processed_messages:
                         media_path = await self.download_image(prev_msg, len(product['images']))
                         if media_path:
                             product['images'].append(media_path)
                         self.processed_messages.add(prev_unique_id)
 
-        # ثالثاً: تحميل الميديا من الرسالة الحالية (لو موجودة)
         if (getattr(message.media, 'photo', None) or
                 getattr(message.media, 'document', None) or
                 getattr(message.media, 'video', None)):
@@ -366,15 +329,11 @@ class TelegramProductScraper:
             if media_path:
                 product['images'].append(media_path)
 
-        # تجاهل المنتج لو مافيش ميديا فعلياً
         if not product['images']:
             print(f"❌ Product skipped (no media): {product['name']}", flush=True)
             return
 
-        # حفظ البيانات محلياً
         self.products.append(product)
-
-        # إرسال المنتج للـ backend
         await self.send_to_backend(product)
 
         print(
@@ -382,7 +341,7 @@ class TelegramProductScraper:
             flush=True)
 
     async def scrape_channel_history(self, channel_link: str):
-        """سكرابينج تاريخ القناة مع تحقق سريع من العضوية"""
+        """سكرابينج تاريخ القناة مع batch processing"""
         try:
             stop_date_str = os.getenv('STOP_DATE', '')
             stop_date = None
@@ -395,28 +354,25 @@ class TelegramProductScraper:
 
             channel_name = CHANNELS.get(channel_link, 'قناة غير معروفة')
 
-            # الحصول على الـ entity مع معالجة FloodWaitError
             while True:
                 try:
                     entity = await self.client.get_entity(channel_link)
 
-                    # تحقق سريع من عضويتك
                     try:
                         me = await self.client.get_me()
                         await self.client(GetParticipantRequest(channel=entity, user_id=me.id))
-                        print(f"✅ Already a member of {entity.title} ({channel_name}), skipping join", flush=True)
+                        print(f"✅ Already a member of {entity.title} ({channel_name})", flush=True)
                     except UserNotParticipantError:
-                        # لو مش عضو، انضم
                         try:
                             await self.client(JoinChannelRequest(entity))
                             print(f"✅ Joined {entity.title} ({channel_name})", flush=True)
                         except UserAlreadyParticipantError:
                             print(f"✅ Already joined {entity.title}", flush=True)
 
-                    break  # تم الحصول على الـ entity بنجاح
+                    break
 
                 except FloodWaitError as e:
-                    print(f"⏳ Flood wait: need to wait {e.seconds} seconds before retrying...", flush=True)
+                    print(f"⏳ Flood wait: need to wait {e.seconds} seconds...", flush=True)
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
                     print(f"❌ Failed to get entity {channel_link}: {e}", flush=True)
@@ -424,13 +380,35 @@ class TelegramProductScraper:
 
             print(f"🔍 Scraping channel: {entity.title} ({channel_name})", flush=True)
 
+            # حفظ الـ entity للـ live mode
+            self.channel_entities[entity.id] = (entity, channel_name)
+
+            chat_id = entity.id
+            self.message_cache[chat_id] = {}
+            self.pending_media[chat_id] = []
+
+            batch_size = 100
+            messages_batch = []
+
             async for message in self.client.iter_messages(entity):
                 if stop_date and message.date < stop_date:
                     print(f"⏹️ Stopped at {message.date}", flush=True)
                     break
 
-                await self.process_message(message, channel_name)
-                await asyncio.sleep(0.5)
+                self.message_cache[chat_id][message.id] = message
+                messages_batch.append(message)
+
+                if len(messages_batch) >= batch_size:
+                    print(f"⚙️ Processing batch of {len(messages_batch)} messages...", flush=True)
+                    for msg in reversed(messages_batch):
+                        await self.process_message(msg, channel_name, entity)
+                    messages_batch = []
+                    await asyncio.sleep(1)
+
+            if messages_batch:
+                print(f"⚙️ Processing final batch of {len(messages_batch)} messages...", flush=True)
+                for msg in reversed(messages_batch):
+                    await self.process_message(msg, channel_name, entity)
 
         except Exception as e:
             print(f"Error scraping channel {channel_link}: {e}", flush=True)
@@ -438,10 +416,20 @@ class TelegramProductScraper:
     async def start_live_monitoring(self):
         """مراقبة الرسائل الجديدة مباشرة"""
 
-        @self.client.on(events.NewMessage(chats=CHANNELS))
+        @self.client.on(events.NewMessage(chats=list(self.channel_entities.keys())))
         async def handler(event):
             print(f"🆕 New message received!", flush=True)
-            await self.process_message(event.message)
+            try:
+                chat_id = event.chat_id
+
+                if chat_id in self.channel_entities:
+                    entity, channel_name = self.channel_entities[chat_id]
+                    await self.process_message(event.message, channel_name, entity)
+                else:
+                    print(f"⚠️ Unknown channel: {chat_id}", flush=True)
+
+            except Exception as e:
+                print(f"❌ Error in live handler: {e}", flush=True)
 
         print("👀 Monitoring channels for new messages...", flush=True)
         await self.client.run_until_disconnected()
@@ -453,7 +441,6 @@ class TelegramProductScraper:
         print("✅ Connected to Telegram", flush=True)
 
         if mode == 'history':
-            # سكرابينج التاريخ فقط
             for channel in CHANNELS:
                 await self.scrape_channel_history(channel)
 
@@ -464,15 +451,21 @@ class TelegramProductScraper:
             print("📁 Data saved to products.json", flush=True)
 
         elif mode == 'live':
-            # المراقبة المباشرة فقط
+            # في الـ live mode، لازم نجيب الـ entities الأول
+            for channel in CHANNELS:
+                try:
+                    entity = await self.client.get_entity(channel)
+                    self.channel_entities[entity.id] = (entity, CHANNELS[channel])
+                except Exception as e:
+                    print(f"❌ Failed to get entity for {channel}: {e}", flush=True)
+
             await self.start_live_monitoring()
 
         elif mode == 'hybrid':
-            # 🌀 الوضع الهجين: التاريخ ثم المراقبة المباشرة
             print("🌀 Hybrid mode: Scraping history first, then monitoring live...", flush=True)
 
             for channel in CHANNELS:
-                print(f"Start Fetching Channel ({channel} products).", flush=True)
+                print(f"Start Fetching Channel ({channel})...", flush=True)
                 await self.scrape_channel_history(channel)
 
             print(f"\n✅ Finished scraping history ({len(self.products)} products).", flush=True)
@@ -481,12 +474,6 @@ class TelegramProductScraper:
             await self.start_live_monitoring()
 
 
-# الاستخدام
 if __name__ == '__main__':
     scraper = TelegramProductScraper()
-
-    # اختر الوضع:
-    # 'history' - لسكرابينج الرسائل القديمة
-    # 'live' - للمراقبة المباشرة للرسائل الجديدة
-
     asyncio.run(scraper.run(mode='hybrid'))
