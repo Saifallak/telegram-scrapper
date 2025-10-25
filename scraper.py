@@ -41,9 +41,9 @@ class Config:
     BACKEND_TOKEN = os.getenv('BACKEND_TOKEN', '')
     TENANT_ID = os.getenv('TENANT_ID', '7')
 
-    # AI
+    # AI - Get models from Google directly
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash-latest')
+    # Models will be fetched dynamically from Google API
 
     # Scraping
     STOP_DATE = os.getenv('STOP_DATE', '')
@@ -188,6 +188,30 @@ class FileManager:
         except Exception as e:
             Logger.error(f"Failed to save {file_path}: {e}")
 
+    @staticmethod
+    def append_product_to_json(product: ProductData, file_path: Path):
+        """Append or update single product in JSON file"""
+        try:
+            existing_data = FileManager.load_json(file_path, default=[])
+            product_dict = product.to_dict()
+
+            # ✅ Replace existing if found, otherwise append
+            for i, p in enumerate(existing_data):
+                if p.get('unique_id') == product.unique_id:
+                    existing_data[i] = product_dict
+                    Logger.debug(f"Product updated in {file_path}: {product.name[:30]}...")
+                    break
+            else:
+                existing_data.append(product_dict)
+                Logger.debug(f"Product added to {file_path}: {product.name[:30]}...")
+
+            # Save file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            Logger.error(f"Failed to append/update product to {file_path}: {e}")
+
 
 # ============================================
 # Extractors
@@ -323,33 +347,78 @@ class TextExtractor:
 
 
 class GeminiExtractor:
-    """Extract product data using Gemini AI"""
+    """Extract product data using Gemini AI with automatic model rotation"""
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1/models"
 
-    # Available models (as of 2024)
-    AVAILABLE_MODELS = [
+    # Preferred model order (fastest to slowest)
+    MODEL_PRIORITY = [
+        'gemini-1.5-flash-8b',
+        'gemini-2.0-flash-exp',
         'gemini-1.5-flash',
         'gemini-1.5-flash-latest',
+        'gemini-exp-1206',
         'gemini-1.5-pro',
         'gemini-1.5-pro-latest',
         'gemini-pro',
     ]
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash-latest"):
+    def __init__(self, api_key: str, models: List[str] = None):
         self.api_key = api_key
-        # Use correct model name format
-        if not model.startswith('models/'):
-            model = f"models/{model}"
-        self.model = model
-        self.enabled = bool(api_key)
+        self.models = []
+        self.current_model_index = 0
+        self.exhausted_models = set()
+        self.enabled = bool(self.api_key)
 
-        if self.enabled:
-            Logger.info(f"Gemini model: {model}")
+        # Models will be loaded later using fetch_available_models
+        if models:
+            self.models = [f"models/{m}" if not m.startswith('models/') else m for m in models if m]
+
+        if not self.enabled:
+            Logger.warning("No Gemini API key provided")
+
+    async def fetch_available_models(self) -> bool:
+        """Fetch available models from Google API and sort by priority"""
+        if not self.api_key:
+            return False
+
+        try:
+            Logger.info("Fetching available models from Google...")
+            available = await self.list_available_models(self.api_key)
+
+            if not available:
+                Logger.error("No models available from Google API")
+                return False
+
+            # Sort models by priority
+            sorted_models = []
+            for priority_model in self.MODEL_PRIORITY:
+                if priority_model in available:
+                    sorted_models.append(f"models/{priority_model}")
+
+            # Add remaining models not in priority list
+            for model in available:
+                model_with_prefix = f"models/{model}"
+                if model_with_prefix not in sorted_models:
+                    sorted_models.append(model_with_prefix)
+
+            self.models = sorted_models
+
+            Logger.success(f"Loaded {len(self.models)} models from Google:")
+            for i, model in enumerate(self.models[:5], 1):  # Show first 5
+                Logger.info(f"  {i}. {model.replace('models/', '')}")
+            if len(self.models) > 5:
+                Logger.info(f"  ... and {len(self.models) - 5} more")
+
+            return True
+
+        except Exception as e:
+            Logger.error(f"Failed to fetch models: {e}")
+            return False
 
     @staticmethod
     async def list_available_models(api_key: str) -> List[str]:
-        """List all available Gemini models"""
+        """List all available Gemini models that support generateContent"""
         url = f"https://generativelanguage.googleapis.com/v1/models?key={api_key}"
 
         try:
@@ -360,6 +429,7 @@ class GeminiExtractor:
                         models = []
                         for model in data.get('models', []):
                             name = model.get('name', '').replace('models/', '')
+                            # Only include models that support generateContent
                             if 'generateContent' in model.get('supportedGenerationMethods', []):
                                 models.append(name)
                         return models
@@ -368,18 +438,102 @@ class GeminiExtractor:
 
         return []
 
+    def get_current_model(self) -> Optional[str]:
+        """Get current active model"""
+        if not self.enabled or not self.models:
+            return None
+
+        # All models exhausted
+        if len(self.exhausted_models) >= len(self.models):
+            Logger.error("All Gemini models exhausted!")
+            self.enabled = False
+            return None
+
+        # Skip exhausted models
+        while self.current_model_index in self.exhausted_models:
+            self.current_model_index = (self.current_model_index + 1) % len(self.models)
+
+        return self.models[self.current_model_index]
+
+    def rotate_model(self):
+        """Rotate to next model"""
+        if not self.enabled or not self.models:
+            return
+
+        current_model = self.models[self.current_model_index].replace('models/', '')
+        Logger.warning(f"Model '{current_model}' quota exhausted/failed")
+        self.exhausted_models.add(self.current_model_index)
+
+        # Try next model
+        next_index = (self.current_model_index + 1) % len(self.models)
+
+        # Find next available model
+        while next_index in self.exhausted_models and len(self.exhausted_models) < len(self.models):
+            next_index = (next_index + 1) % len(self.models)
+
+        if next_index not in self.exhausted_models:
+            self.current_model_index = next_index
+            next_model = self.models[next_index].replace('models/', '')
+            Logger.info(f"Switched to model: {next_model} ({self.current_model_index + 1}/{len(self.models)})")
+        else:
+            Logger.error("All models exhausted - switching to manual extraction!")
+            self.enabled = False
+
     async def extract(self, text: str, channel_name: str) -> Optional[Dict]:
-        """Extract product data using Gemini AI"""
+        """Extract product data using Gemini AI with model rotation"""
         if not self.enabled:
             return None
 
-        try:
-            prompt = self._build_prompt(text, channel_name)
-            response = await self._call_api(prompt)
-            return self._parse_response(response)
-        except Exception as e:
-            Logger.warning(f"Gemini extraction failed: {e}")
-            return None
+        max_attempts = len(self.models)
+        attempt = 0
+
+        while attempt < max_attempts:
+            model = self.get_current_model()
+            if not model:
+                return None
+
+            try:
+                prompt = self._build_prompt(text, channel_name)
+                response = await self._call_api(prompt, model)
+                return self._parse_response(response)
+
+            except Exception as e:
+                error_msg = str(e).lower()
+
+                # Check if quota exceeded or rate limit
+                if any(keyword in error_msg for keyword in
+                       ['quota', 'rate', 'limit', '429', 'resource_exhausted', 'resource has been exhausted']):
+                    Logger.warning(f"Model quota exceeded: {e}")
+                    self.rotate_model()
+                    attempt += 1
+
+                    if self.enabled:
+                        Logger.info(f"Retrying with next model (attempt {attempt + 1}/{max_attempts})...")
+                        await asyncio.sleep(1)  # Small delay before retry
+                        continue
+                    else:
+                        Logger.error("All models exhausted - switching to manual extraction")
+                        return None
+                else:
+                    # Other errors (parsing, network, etc.)
+                    if "unavailable" in error_msg or "503" in error_msg or "overloaded" in error_msg:
+                        Logger.warning(f"Model overloaded (503): {e}")
+                        self.rotate_model()
+                        attempt += 1
+
+                        if self.enabled:
+                            Logger.info(f"Retrying with next model (attempt {attempt + 1}/{max_attempts})...")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            Logger.error("All models exhausted - switching to manual extraction")
+                            return None
+                    else:
+                        Logger.warning(f"Gemini extraction failed: {e}")
+                        return None
+
+        Logger.error("All retry attempts failed")
+        return None
 
     def _build_prompt(self, text: str, channel_name: str) -> str:
         """Build extraction prompt"""
@@ -410,10 +564,10 @@ class GeminiExtractor:
 
 أرجع JSON فقط بدون أي نص إضافي."""
 
-    async def _call_api(self, prompt: str) -> Dict:
-        """Call Gemini API"""
+    async def _call_api(self, prompt: str, model: str) -> Dict:
+        """Call Gemini API with specified model"""
         # Remove 'models/' prefix if present for URL construction
-        model_name = self.model.replace('models/', '')
+        model_name = model.replace('models/', '')
         url = f"{self.BASE_URL}/{model_name}:generateContent?key={self.api_key}"
 
         payload = {
@@ -422,33 +576,114 @@ class GeminiExtractor:
             }],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 1000,
+                "maxOutputTokens": 4096,
                 "topP": 0.8,
                 "topK": 10
-            }
+            },
+            # Add safety settings to be more permissive
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_NONE"
+                }
+            ]
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=30) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise Exception(f"API error {resp.status}: {error_text}")
+                response_text = await resp.text()
 
-                return await resp.json()
+                if resp.status != 200:
+                    raise Exception(f"API error {resp.status}: {response_text}")
+
+                try:
+                    return json.loads(response_text)
+                except json.JSONDecodeError as e:
+                    Logger.error(f"Failed to parse API response: {e}")
+                    Logger.debug(f"Response text: {response_text[:500]}...")
+                    raise Exception(f"Invalid JSON response from API")
 
     def _parse_response(self, response: Dict) -> Optional[Dict]:
         """Parse Gemini response"""
-        if 'candidates' not in response or not response['candidates']:
+        try:
+            # Check if response has candidates
+            if 'candidates' not in response or not response['candidates']:
+                Logger.warning("No candidates in Gemini response")
+                Logger.debug(f"Full response: {json.dumps(response, indent=2, ensure_ascii=False)[:500]}")
+                return None
+
+            candidate = response['candidates'][0]
+
+            # Check finish reason (safety filters, etc.)
+            finish_reason = candidate.get('finishReason', 'UNKNOWN')
+            if finish_reason != 'STOP':
+                Logger.warning(f"Gemini stopped with reason: {finish_reason}")
+
+                if finish_reason == 'MAX_TOKENS':
+                    Logger.warning("Response truncated due to MAX_TOKENS — retrying with next model...")
+                    self.rotate_model()
+                    return None
+
+                # Check for safety ratings
+                if 'safetyRatings' in candidate:
+                    Logger.debug(f"Safety ratings: {candidate['safetyRatings']}")
+
+                # If blocked by safety, try to continue anyway
+                if finish_reason in ['SAFETY', 'RECITATION', 'OTHER']:
+                    Logger.warning(f"Content filtered by Gemini ({finish_reason}), falling back to manual extraction")
+                    return None
+
+            # Check if candidate has content
+            if 'content' not in candidate:
+                Logger.warning("No content in Gemini candidate")
+                Logger.debug(f"Candidate structure: {json.dumps(candidate, indent=2, ensure_ascii=False)[:500]}")
+                return None
+
+            content = candidate['content']
+
+            # Check if content has parts
+            if 'parts' not in content or not content['parts']:
+                Logger.warning("No parts in Gemini content")
+                Logger.debug(f"Content structure: {json.dumps(content, indent=2, ensure_ascii=False)[:500]}")
+                Logger.debug(f"Full candidate: {json.dumps(candidate, indent=2, ensure_ascii=False)[:1000]}")
+                return None
+
+            # Get text from first part
+            text = content['parts'][0].get('text', '')
+
+            if not text:
+                Logger.warning("Empty text in Gemini response")
+                return None
+
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if not json_match:
+                Logger.warning(f"No JSON found in response: {text[:100]}...")
+                return None
+
+            return json.loads(json_match.group(0))
+
+        except KeyError as e:
+            Logger.warning(f"Missing key in Gemini response: {e}")
             return None
-
-        content = response['candidates'][0]['content']['parts'][0]['text']
-
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if not json_match:
+        except json.JSONDecodeError as e:
+            Logger.warning(f"Failed to parse JSON from Gemini: {e}")
             return None
-
-        return json.loads(json_match.group(0))
+        except Exception as e:
+            Logger.warning(f"Unexpected error parsing Gemini response: {e}")
+            return None
 
 
 # ============================================
@@ -637,17 +872,11 @@ class BackendClient:
 
     def _save_offline(self, product: ProductData):
         """Save product offline"""
-        data = FileManager.load_json(Path(self.config.OFFLINE_FILE))
-
-        if not any(p.get('unique_id') == product.unique_id for p in data):
-            data.append(product.to_dict())
-            FileManager.save_json(data, Path(self.config.OFFLINE_FILE))
+        FileManager.append_product_to_json(product, Path(self.config.OFFLINE_FILE))
 
     def _save_failed(self, product: ProductData):
         """Save failed product"""
-        data = FileManager.load_json(Path(self.config.FAILED_FILE))
-        data.append(product.to_dict())
-        FileManager.save_json(data, Path(self.config.FAILED_FILE))
+        FileManager.append_product_to_json(product, Path(self.config.FAILED_FILE))
 
 
 # ============================================
@@ -662,7 +891,7 @@ class TelegramProductScraper:
         self.client = TelegramClient(config.SESSION_FILE, config.API_ID, config.API_HASH)
 
         # Components
-        self.gemini = GeminiExtractor(config.GEMINI_API_KEY, config.GEMINI_MODEL)
+        self.gemini = GeminiExtractor(config.GEMINI_API_KEY)
         self.media_handler = MediaHandler(config.MEDIA_DIR, config.MAX_RETRIES)
         self.backend = BackendClient(config)
 
@@ -673,11 +902,18 @@ class TelegramProductScraper:
         self.message_cache = defaultdict(dict)
         self.channel_entities = {}
 
+        # Statistics
+        self.stats = {
+            'total': 0,
+            'success': 0,
+            'failed': 0,
+            'offline': 0,
+            'gemini_used': 0,
+            'manual_used': 0
+        }
+
         Logger.info("Scraper initialized")
-        if self.gemini.enabled:
-            Logger.success("Gemini AI enabled")
-        else:
-            Logger.warning("Gemini AI disabled - using manual extraction")
+        # Gemini status will be confirmed after fetching models
 
     async def extract_product_info(
             self,
@@ -689,6 +925,7 @@ class TelegramProductScraper:
         gemini_result = await self.gemini.extract(text, channel_name)
 
         if gemini_result:
+            self.stats['gemini_used'] += 1
             text_data = {
                 'name': gemini_result.get('name', ''),
                 'short_description': gemini_result.get('short_description', ''),
@@ -701,6 +938,7 @@ class TelegramProductScraper:
             return text_data, price_data, ExtractionMethod.GEMINI
 
         # Fallback to manual
+        self.stats['manual_used'] += 1
         text_data = TextExtractor.extract(text)
         price_data = PriceExtractor.extract(text)
         return text_data, price_data, ExtractionMethod.MANUAL
@@ -804,6 +1042,43 @@ class TelegramProductScraper:
         chat_id = message.chat_id
         unique_id = f"{chat_id}_{message.id}"
 
+        # ✅ Check if product already exists in products.json
+        products_path = Path(self.config.PRODUCTS_FILE)
+        existing_products = FileManager.load_json(products_path, default=[])
+
+        existing_product_data = next((p for p in existing_products if p.get('unique_id') == unique_id), None)
+
+        if existing_product_data:
+            # لو نوع الاستخراج مانيوال، نعيد المحاولة
+            if existing_product_data.get('extraction_method') == ExtractionMethod.MANUAL.value:
+                Logger.info(f"Product {unique_id} exists but extracted manually — reprocessing with AI...")
+            else:
+                Logger.info(f"Product {unique_id} already exists — sending to backend only")
+
+                product = ProductData(
+                    unique_id=existing_product_data['unique_id'],
+                    channel_id=existing_product_data['channel_id'],
+                    message_id=existing_product_data['message_id'],
+                    timestamp=existing_product_data['timestamp'],
+                    channel_name=existing_product_data['channel_name'],
+                    name=existing_product_data['name'],
+                    short_description=existing_product_data['short_description'],
+                    description=existing_product_data['description'],
+                    images=existing_product_data.get('images', []),
+                    prices=ProductPrice(**existing_product_data['prices']),
+                    extraction_method=existing_product_data.get('extraction_method', ExtractionMethod.MANUAL.value)
+                )
+
+                success = await self.backend.send_product(product)
+                if success:
+                    self.stats['success'] += 1
+                else:
+                    if self.backend.enabled:
+                        self.stats['failed'] += 1
+                    else:
+                        self.stats['offline'] += 1
+                return
+
         # Skip if already processed
         if unique_id in self.processed_messages:
             return
@@ -850,13 +1125,30 @@ class TelegramProductScraper:
             Logger.warning(f"Invalid product skipped: {product.name}")
             return
 
+        # Add to memory list
         self.products.append(product)
-        await self.backend.send_product(product)
+        self.stats['total'] += 1
 
+        # Save immediately to products.json
+        FileManager.append_product_to_json(product, Path(self.config.PRODUCTS_FILE))
+
+        # Try to send to backend
+        success = await self.backend.send_product(product)
+
+        if success:
+            self.stats['success'] += 1
+        else:
+            if self.backend.enabled:
+                self.stats['failed'] += 1
+            else:
+                self.stats['offline'] += 1
+
+        # Log with statistics
         Logger.info(
             f"[{method.value}] {product.name[:50]} | "
             f"{len(product.images)} images | "
-            f"Price: {product.prices.current_price}"
+            f"Price: {product.prices.current_price} | "
+            f"Stats: ✅{self.stats['success']} ❌{self.stats['failed']} 💾{self.stats['offline']}"
         )
 
     async def _collect_all_media(
@@ -1065,6 +1357,17 @@ class TelegramProductScraper:
         """Run scraper in specified mode"""
         await self.connect()
 
+        # Fetch Gemini models from Google API
+        if self.gemini.api_key:
+            models_loaded = await self.gemini.fetch_available_models()
+            if models_loaded:
+                Logger.success(f"Gemini AI enabled with {len(self.gemini.models)} model(s)")
+            else:
+                Logger.warning("Failed to load Gemini models - using manual extraction")
+                self.gemini.enabled = False
+        else:
+            Logger.warning("No Gemini API key - using manual extraction")
+
         if mode == 'history':
             await self._run_history_mode()
         elif mode == 'live':
@@ -1081,13 +1384,16 @@ class TelegramProductScraper:
         for channel in CHANNELS:
             await self.scrape_channel_history(channel)
 
-        # Save results
-        FileManager.save_json(
-            [p.to_dict() for p in self.products],
-            Path(self.config.PRODUCTS_FILE)
-        )
-
-        Logger.success(f"Scraped {len(self.products)} products")
+        # Print final statistics
+        Logger.success("=" * 50)
+        Logger.success(f"Scraping Complete!")
+        Logger.success(f"Total products: {self.stats['total']}")
+        Logger.success(f"Sent to backend: {self.stats['success']}")
+        Logger.success(f"Failed to send: {self.stats['failed']}")
+        Logger.success(f"Saved offline: {self.stats['offline']}")
+        Logger.success(f"Gemini extractions: {self.stats['gemini_used']}")
+        Logger.success(f"Manual extractions: {self.stats['manual_used']}")
+        Logger.success("=" * 50)
 
     async def _run_live_mode(self):
         """Run in live mode"""
@@ -1111,7 +1417,15 @@ class TelegramProductScraper:
             Logger.info(f"Fetching channel: {channel}")
             await self.scrape_channel_history(channel)
 
-        Logger.success(f"History done: {len(self.products)} products")
+        # Print statistics
+        Logger.success("=" * 50)
+        Logger.success(f"History Complete!")
+        Logger.success(f"Total products: {self.stats['total']}")
+        Logger.success(f"Sent to backend: {self.stats['success']}")
+        Logger.success(f"Gemini extractions: {self.stats['gemini_used']}")
+        Logger.success(f"Manual extractions: {self.stats['manual_used']}")
+        Logger.success("=" * 50)
+
         Logger.info("Switching to live monitoring...")
 
         # Start live monitoring
@@ -1135,23 +1449,7 @@ async def main():
     Logger.info(f"Batch size: {config.BATCH_SIZE}")
     Logger.info(f"Max retries: {config.MAX_RETRIES}")
 
-    # Validate Gemini API if provided
-    if config.GEMINI_API_KEY:
-        Logger.info("Checking Gemini API...")
-        available_models = await GeminiExtractor.list_available_models(config.GEMINI_API_KEY)
-
-        if available_models:
-            Logger.success(f"Gemini API valid. Available models: {len(available_models)}")
-
-            # Check if selected model is available
-            model_name = config.GEMINI_MODEL.replace('models/', '')
-            if model_name not in available_models:
-                Logger.warning(f"Model '{model_name}' not found. Available:")
-                for model in available_models[:5]:  # Show first 5
-                    Logger.info(f"  - {model}")
-                Logger.warning("Will try anyway, but might fail")
-        else:
-            Logger.warning("Could not verify Gemini API key")
+    # No need to validate Gemini here - will be done in scraper.run()
 
     # Create and run scraper
     scraper = TelegramProductScraper(config)
