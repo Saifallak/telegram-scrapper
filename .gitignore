@@ -4,7 +4,6 @@
 .env
 *.session
 *.session-journal
-App configuration.pdf
 
 # ============================================
 # Python
@@ -38,6 +37,7 @@ downloaded_images/
 *.gif
 *.webp
 *.mp4
+*.pdf
 
 # Data files
 products.json
