@@ -8,3 +8,4 @@ scraper_session.session-journal
 # Products.
 offline_products.json
 products.json
+failed_products.json

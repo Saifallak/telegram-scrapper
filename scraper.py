@@ -248,8 +248,38 @@ class TelegramProductScraper:
                         print(f"❌ Failed to send product: {resp.status}", flush=True)
                         print(f"🧾 Response: {resp_text}", flush=True)
 
+                        # حفظ المنتج في ملف أخطاء
+                        error_file = 'failed_products.json'
+                        failed_data = []
+
+                        if os.path.exists(error_file):
+                            with open(error_file, 'r', encoding='utf-8') as f:
+                                failed_data = json.load(f)
+
+                        failed_data.append(product_data)
+
+                        with open(error_file, 'w', encoding='utf-8') as f:
+                            json.dump(failed_data, f, ensure_ascii=False, indent=2)
+
+                        print(f"💾 Product saved to {error_file} due to error", flush=True)
+
         except Exception as e:
             print(f"Error sending to backend: {e}", flush=True)
+
+            # حفظ المنتج في ملف أخطاء
+            error_file = 'failed_products.json'
+            failed_data = []
+
+            if os.path.exists(error_file):
+                with open(error_file, 'r', encoding='utf-8') as f:
+                    failed_data = json.load(f)
+
+            failed_data.append(product_data)
+
+            with open(error_file, 'w', encoding='utf-8') as f:
+                json.dump(failed_data, f, ensure_ascii=False, indent=2)
+
+            print(f"💾 Product saved to {error_file} due to error", flush=True)
 
     async def collect_previous_media(self, entity, message, max_lookback=20):
         """جمع الصور/الفيديوهات من الرسائل السابقة اللي بدون نص"""
