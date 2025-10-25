@@ -53,8 +53,11 @@ class TelegramProductScraper:
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
-        # 🆕 نظف النص من الإيموجي (أي حرف غير عربي/إنجليزي/رقم/مسافة/علامات ترقيم)
-        clean_text = re.sub(r'[^\u0600-\u06FFa-zA-Z0-9\s\.\,\:\+\-\/]', ' ', text)
+        # 🆕 استبدال الفاصلة بنقطة للأرقام العشرية (7,5 -> 7.5)
+        text_normalized = re.sub(r'(\d+),(\d+)', r'\1.\2', text)
+
+        # نظف النص من الإيموجي (أي حرف غير عربي/إنجليزي/رقم/مسافة/علامات ترقيم)
+        clean_text = re.sub(r'[^\u0600-\u06FFa-zA-Z0-9\s\.\,\:\+\-\/]', ' ', text_normalized)
 
         price_patterns = [
             r'(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|LE)',
@@ -66,8 +69,8 @@ class TelegramProductScraper:
 
         all_prices = set()
 
-        # نبحث في النص الأصلي والنص المنظف
-        for search_text in [text, clean_text]:
+        # نبحث في النص المعدل والنص المنظف
+        for search_text in [text_normalized, clean_text]:
             for pattern in price_patterns:
                 matches = re.findall(pattern, search_text)
                 for match in matches:
@@ -102,7 +105,7 @@ class TelegramProductScraper:
                 for num_str in numbers:
                     try:
                         num = float(num_str)
-                        if 10 <= num <= 100000:  # نفترض إن السعر على الأقل 10 جنيه
+                        if 1 <= num <= 100000:  # أي رقم من 1 لـ 100,000
                             prices['current_price'] = num
                             break
                     except (ValueError, TypeError):
