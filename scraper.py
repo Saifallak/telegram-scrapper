@@ -25,9 +25,9 @@ print("ENV DEBUG:", API_ID, API_HASH, PHONE, flush=True)
 
 # قنوات التليجرام
 CHANNELS = {
-    # 'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
-    # 'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
-    # 'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
+    'https://t.me/+VAkpot4taw_v9n2p': 'أدوات منزلية',
+    'https://t.me/+UbRrLCJUETxcZmWJ': 'لعب أطفال',
+    'https://t.me/+TQHOHpqeFZ4a2Lmp': 'مستحضرات التجميل',
     # 'https://t.me/+T1hjkvhugV4GxRYD': 'ملابس داخلية',
     'https://t.me/+Tx6OTiWMi6WS4Y2j': 'مفروشات',
     'https://t.me/+Sbbi6_lLOI2_wP41': 'شرابات',
