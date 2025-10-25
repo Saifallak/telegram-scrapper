@@ -393,9 +393,9 @@ class GeminiExtractor:
 
 استخرج التالي بصيغة JSON:
 {{
-    "name": "اسم المنتج (السطر الأول عادة)",
-    "short_description": "وصف قصير (السطر الثاني إذا وُجد)",
-    "description": "الوصف الكامل (باقي النص)",
+    "name": "اسم المنتج (السطر الأول عادة) مع حذف الاسعار منه",
+    "short_description": "وصف قصير (السطر الثاني عادة) مع حذف الاسعار منه لو مش موجود وصف قصير انشئه بحد اقصي ١٦٠ حرف",
+    "description": "الوصف الكامل (باقي النص عادة) مع حذف الاسعار منه لو مش موجود وصف انشئه بدون حد اقصي",
     "current_price": رقم السعر الحالي أو null,
     "old_price": السعر القديم إذا وُجد أو null
 }}
@@ -567,30 +567,41 @@ class BackendClient:
 
     def _build_form_data(self, product: ProductData) -> aiohttp.FormData:
         """Build form data for backend"""
+
+        def safe_str(value):
+            """Convert None → empty string safely"""
+            return '' if value is None else str(value)
+
         form = aiohttp.FormData()
 
-        # Basic fields
-        form.add_field('variants[0][sku]', product.unique_id)
-        form.add_field('variants[0][barcode]', product.unique_id)
+        # 🧱 Basic fields
+        form.add_field('variants[0][sku]', safe_str(product.unique_id))
+        form.add_field('variants[0][barcode]', safe_str(product.unique_id))
         form.add_field('variants[0][stock]', '10')
-        form.add_field('name[ar]', product.name)
-        form.add_field('name[en]', product.name)
-        form.add_field('description[ar]', product.description)
-        form.add_field('description[en]', product.description)
-        form.add_field('short_description[ar]', product.short_description)
-        form.add_field('short_description[en]', product.short_description)
-        form.add_field('category_name', product.channel_name)
+        form.add_field('name[ar]', safe_str(product.name))
+        form.add_field('name[en]', safe_str(product.name))
+        form.add_field('description[ar]', safe_str(product.description))
+        form.add_field('description[en]', safe_str(product.description))
+        form.add_field('short_description[ar]', safe_str(product.short_description))
+        form.add_field('short_description[en]', safe_str(product.short_description))
+        form.add_field('category_name', safe_str(product.channel_name))
 
-        # Pricing
-        if product.prices.old_price:
-            form.add_field('variants[0][price]', str(product.prices.old_price))
-            form.add_field('variants[0][discount]', str(product.prices.current_price))
+        # 💰 Pricing
+        price = product.prices.current_price
+        old_price = product.prices.old_price
+
+        if old_price is not None and price is not None:
+            form.add_field('variants[0][price]', safe_str(old_price))
+            form.add_field('variants[0][discount]', safe_str(price))
         else:
-            form.add_field('variants[0][price]', str(product.prices.current_price or 0))
+            form.add_field(
+                'variants[0][price]',
+                safe_str(price or old_price or 0)
+            )
 
-        # Images
+        # 🖼️ Images
         for media_path in product.images:
-            if Path(media_path).exists():
+            if media_path and Path(media_path).exists():
                 self._add_image_field(form, media_path)
 
         return form
