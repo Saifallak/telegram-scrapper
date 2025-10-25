@@ -53,21 +53,31 @@ class TelegramProductScraper:
 
     def extract_price(self, text: str) -> Dict[str, Optional[float]]:
         """استخراج الأسعار من النص وتحديد الأقل كالسعر الحالي"""
+        # 🆕 نظف النص من الإيموجي (أي حرف غير عربي/إنجليزي/رقم/مسافة/علامات ترقيم)
+        clean_text = re.sub(r'[^\u0600-\u06FFa-zA-Z0-9\s\.\,\:\+\-\/]', ' ', text)
+
         price_patterns = [
             r'(\d+(?:\.\d+)?)\s*(?:جنيه|ج\.م|LE)',
             r'السعر[:\s]+(\d+(?:\.\d+)?)',
             r'بسعر[:\s]+(\d+(?:\.\d+)?)',
-            r'بـ(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*ج',
+            r'بـ\s*(\d+(?:\.\d+)?)',
+            r'(\d+(?:\.\d+)?)\s*ج(?!\w)',  # ج متبوعة بمسافة أو نهاية
         ]
 
         all_prices = set()
-        for pattern in price_patterns:
-            for match in re.findall(pattern, text):
-                try:
-                    all_prices.add(float(match))
-                except ValueError:
-                    pass
+
+        # نبحث في النص الأصلي والنص المنظف
+        for search_text in [text, clean_text]:
+            for pattern in price_patterns:
+                matches = re.findall(pattern, search_text)
+                for match in matches:
+                    try:
+                        price = float(match)
+                        # تجاهل الأرقام الغريبة (أكبر من 100000 أو أصغر من 1)
+                        if 1 <= price <= 100000:
+                            all_prices.add(price)
+                    except (ValueError, TypeError):
+                        pass
 
         prices = {'current_price': None, 'old_price': None}
 
@@ -75,11 +85,28 @@ class TelegramProductScraper:
             prices['current_price'] = min(all_prices)
             if len(all_prices) > 1:
                 prices['old_price'] = max(all_prices)
+        else:
+            # fallback: نبحث عن أي رقم في النص المنظف بعد كلمة "السعر"
+            price_context = re.search(r'السعر.*?(\d+(?:\.\d+)?)', clean_text)
+            if price_context:
+                try:
+                    price = float(price_context.group(1))
+                    if 1 <= price <= 100000:
+                        prices['current_price'] = price
+                except (ValueError, TypeError):
+                    pass
 
-        if not prices['current_price']:
-            match = re.search(r'(\d+(?:\.\d+)?)', text)
-            if match:
-                prices['current_price'] = float(match.group(1))
+            # لو لسه مفيش سعر، نجيب أول رقم معقول
+            if not prices['current_price']:
+                numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', clean_text)
+                for num_str in numbers:
+                    try:
+                        num = float(num_str)
+                        if 10 <= num <= 100000:  # نفترض إن السعر على الأقل 10 جنيه
+                            prices['current_price'] = num
+                            break
+                    except (ValueError, TypeError):
+                        pass
 
         return prices
 
