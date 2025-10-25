@@ -41,8 +41,10 @@ class Config:
     BACKEND_TOKEN = os.getenv('BACKEND_TOKEN', '')
     TENANT_ID = os.getenv('TENANT_ID', '7')
 
-    # AI - Get models from Google directly
-    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+    # AI - Support multiple API keys separated by comma
+    GEMINI_API_KEYS = [
+        key.strip() for key in os.getenv('GEMINI_API_KEY', '').split(',') if key.strip()
+    ]
     # Models will be fetched dynamically from Google API
 
     # Scraping
@@ -57,6 +59,12 @@ class Config:
     PRODUCTS_FILE = 'products.json'
     OFFLINE_FILE = 'offline_products.json'
     FAILED_FILE = 'failed_products.json'
+
+
+class QuotaType(Enum):
+    """Types of quota limits"""
+    RATE_LIMIT = "rate_limit"  # Per minute - wait and retry
+    DAILY_LIMIT = "daily_limit"  # Per day - skip to next model
 
 
 class ExtractionMethod(Enum):
@@ -347,7 +355,7 @@ class TextExtractor:
 
 
 class GeminiExtractor:
-    """Extract product data using Gemini AI with automatic model rotation"""
+    """Extract product data using Gemini AI with automatic model rotation and multi-key support"""
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1/models"
 
@@ -363,28 +371,78 @@ class GeminiExtractor:
         'gemini-pro',
     ]
 
-    def __init__(self, api_key: str, models: List[str] = None):
-        self.api_key = api_key
+    def __init__(self, api_keys: List[str], models: List[str] = None):
+        self.api_keys = api_keys  # List of API keys
+        self.current_key_index = 0
         self.models = []
         self.current_model_index = 0
-        self.exhausted_models = set()
-        self.enabled = bool(self.api_key)
+        self.exhausted_models = set()  # Models exhausted for current key
+        self.exhausted_keys = set()  # Keys that are fully exhausted
+        self.enabled = bool(self.api_keys)
 
         # Models will be loaded later using fetch_available_models
         if models:
             self.models = [f"models/{m}" if not m.startswith('models/') else m for m in models if m]
 
         if not self.enabled:
-            Logger.warning("No Gemini API key provided")
+            Logger.warning("No Gemini API keys provided")
+        else:
+            Logger.info(f"Initialized with {len(self.api_keys)} API key(s)")
+
+    def get_current_api_key(self) -> Optional[str]:
+        """Get current active API key"""
+        if not self.enabled or not self.api_keys:
+            return None
+
+        # All keys exhausted
+        if len(self.exhausted_keys) >= len(self.api_keys):
+            Logger.error("All API keys exhausted!")
+            self.enabled = False
+            return None
+
+        # Skip exhausted keys
+        while self.current_key_index in self.exhausted_keys:
+            self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+
+        return self.api_keys[self.current_key_index]
+
+    def rotate_api_key(self):
+        """Rotate to next API key and reset model exhaustion"""
+        if not self.enabled or not self.api_keys:
+            return
+
+        current_key_num = self.current_key_index + 1
+        Logger.warning(f"API Key #{current_key_num} exhausted all models")
+        self.exhausted_keys.add(self.current_key_index)
+
+        # Reset model exhaustion for new key
+        self.exhausted_models.clear()
+        self.current_model_index = 0
+
+        # Try next key
+        next_index = (self.current_key_index + 1) % len(self.api_keys)
+
+        # Find next available key
+        while next_index in self.exhausted_keys and len(self.exhausted_keys) < len(self.api_keys):
+            next_index = (next_index + 1) % len(self.api_keys)
+
+        if next_index not in self.exhausted_keys:
+            self.current_key_index = next_index
+            next_key_num = next_index + 1
+            Logger.info(f"Switched to API Key #{next_key_num} ({next_key_num}/{len(self.api_keys)})")
+        else:
+            Logger.error("All API keys exhausted - switching to manual extraction!")
+            self.enabled = False
 
     async def fetch_available_models(self) -> bool:
         """Fetch available models from Google API and sort by priority"""
-        if not self.api_key:
+        api_key = self.get_current_api_key()
+        if not api_key:
             return False
 
         try:
             Logger.info("Fetching available models from Google...")
-            available = await self.list_available_models(self.api_key)
+            available = await self.list_available_models(api_key)
 
             if not available:
                 Logger.error("No models available from Google API")
@@ -456,12 +514,12 @@ class GeminiExtractor:
         return self.models[self.current_model_index]
 
     def rotate_model(self):
-        """Rotate to next model"""
+        """Rotate to next model (for daily quota exhaustion)"""
         if not self.enabled or not self.models:
             return
 
         current_model = self.models[self.current_model_index].replace('models/', '')
-        Logger.warning(f"Model '{current_model}' quota exhausted/failed")
+        Logger.warning(f"Model '{current_model}' daily quota exhausted")
         self.exhausted_models.add(self.current_model_index)
 
         # Try next model
@@ -476,61 +534,117 @@ class GeminiExtractor:
             next_model = self.models[next_index].replace('models/', '')
             Logger.info(f"Switched to model: {next_model} ({self.current_model_index + 1}/{len(self.models)})")
         else:
-            Logger.error("All models exhausted - switching to manual extraction!")
-            self.enabled = False
+            # All models exhausted for this key
+            Logger.warning("All models exhausted for current API key")
+            self.rotate_api_key()
+
+    @staticmethod
+    def _parse_quota_error(error_text: str) -> Tuple[QuotaType, Optional[float]]:
+        """
+        Parse quota error to determine type and retry delay
+        Returns: (quota_type, retry_seconds)
+        """
+        error_lower = error_text.lower()
+
+        # Check for daily quota exhaustion
+        if 'per day' in error_lower or 'perdayperprojectpermodel' in error_lower:
+            return QuotaType.DAILY_LIMIT, None
+
+        # Check for rate limit with retry delay
+        retry_match = re.search(r'retry in ([0-9.]+)s', error_lower)
+        if retry_match:
+            retry_seconds = float(retry_match.group(1))
+            return QuotaType.RATE_LIMIT, retry_seconds
+
+        # Check for explicit rate limit messages
+        if any(keyword in error_lower for keyword in ['per minute', 'rate limit', 'requests per minute']):
+            # Default to 60 seconds if no retry time specified
+            return QuotaType.RATE_LIMIT, 60.0
+
+        # Default: treat as daily limit
+        return QuotaType.DAILY_LIMIT, None
 
     async def extract(self, text: str, channel_name: str) -> Optional[Dict]:
-        """Extract product data using Gemini AI with model rotation"""
+        """Extract product data using Gemini AI with intelligent quota handling"""
         if not self.enabled:
             return None
 
-        max_attempts = len(self.models)
+        max_attempts = len(self.models) * len(self.api_keys)
         attempt = 0
 
         while attempt < max_attempts:
             model = self.get_current_model()
-            if not model:
+            api_key = self.get_current_api_key()
+
+            if not model or not api_key:
                 return None
 
             try:
                 prompt = self._build_prompt(text, channel_name)
-                response = await self._call_api(prompt, model)
+                response = await self._call_api(prompt, model, api_key)
                 return self._parse_response(response)
 
             except Exception as e:
-                error_msg = str(e).lower()
+                error_msg = str(e)
+                error_lower = error_msg.lower()
 
-                # Check if quota exceeded or rate limit
-                if any(keyword in error_msg for keyword in
+                # Check if quota error (429)
+                if any(keyword in error_lower for keyword in
                        ['quota', 'rate', 'limit', '429', 'resource_exhausted', 'resource has been exhausted']):
-                    Logger.warning(f"Model quota exceeded: {e}")
+
+                    # Parse error to determine quota type
+                    quota_type, retry_seconds = self._parse_quota_error(error_msg)
+
+                    if quota_type == QuotaType.RATE_LIMIT and retry_seconds:
+                        # Rate limit - wait and retry with same model
+                        Logger.warning(f"⏱️ Rate limit hit - waiting {retry_seconds:.1f}s before retry...")
+                        await asyncio.sleep(retry_seconds + 1)  # Add 1 second buffer
+                        Logger.info("Retrying with same model after rate limit wait...")
+                        # Don't increment attempt or change model, just retry
+                        continue
+
+                    elif quota_type == QuotaType.DAILY_LIMIT:
+                        # Daily limit - switch model immediately
+                        Logger.warning(f"📅 Daily quota exhausted for current model")
+                        self.rotate_model()
+                        attempt += 1
+
+                        if self.enabled:
+                            Logger.info(f"Trying next model (attempt {attempt + 1}/{max_attempts})...")
+                            await asyncio.sleep(0.5)  # Small delay
+                            continue
+                        else:
+                            Logger.error("All models and keys exhausted - switching to manual extraction")
+                            return None
+
+                    else:
+                        # Unknown quota error - treat as daily limit
+                        Logger.warning(f"Unknown quota error: {e}")
+                        self.rotate_model()
+                        attempt += 1
+                        if self.enabled:
+                            continue
+                        else:
+                            return None
+
+                # Handle 503 errors (service overloaded)
+                elif "unavailable" in error_lower or "503" in error_lower or "overloaded" in error_lower:
+                    Logger.warning(f"🔄 Model overloaded (503) - rotating to next model")
                     self.rotate_model()
                     attempt += 1
 
                     if self.enabled:
                         Logger.info(f"Retrying with next model (attempt {attempt + 1}/{max_attempts})...")
-                        await asyncio.sleep(1)  # Small delay before retry
+                        await asyncio.sleep(2)
                         continue
                     else:
                         Logger.error("All models exhausted - switching to manual extraction")
                         return None
+
                 else:
                     # Other errors (parsing, network, etc.)
-                    if "unavailable" in error_msg or "503" in error_msg or "overloaded" in error_msg:
-                        Logger.warning(f"Model overloaded (503): {e}")
-                        self.rotate_model()
-                        attempt += 1
-
-                        if self.enabled:
-                            Logger.info(f"Retrying with next model (attempt {attempt + 1}/{max_attempts})...")
-                            await asyncio.sleep(2)
-                            continue
-                        else:
-                            Logger.error("All models exhausted - switching to manual extraction")
-                            return None
-                    else:
-                        Logger.warning(f"Gemini extraction failed: {e}")
-                        return None
+                    Logger.warning(f"Gemini extraction failed: {e}")
+                    return None
 
         Logger.error("All retry attempts failed")
         return None
@@ -564,11 +678,11 @@ class GeminiExtractor:
 
 أرجع JSON فقط بدون أي نص إضافي."""
 
-    async def _call_api(self, prompt: str, model: str) -> Dict:
-        """Call Gemini API with specified model"""
+    async def _call_api(self, prompt: str, model: str, api_key: str) -> Dict:
+        """Call Gemini API with specified model and API key"""
         # Remove 'models/' prefix if present for URL construction
         model_name = model.replace('models/', '')
-        url = f"{self.BASE_URL}/{model_name}:generateContent?key={self.api_key}"
+        url = f"{self.BASE_URL}/{model_name}:generateContent?key={api_key}"
 
         payload = {
             "contents": [{
@@ -891,7 +1005,7 @@ class TelegramProductScraper:
         self.client = TelegramClient(config.SESSION_FILE, config.API_ID, config.API_HASH)
 
         # Components
-        self.gemini = GeminiExtractor(config.GEMINI_API_KEY)
+        self.gemini = GeminiExtractor(config.GEMINI_API_KEYS)
         self.media_handler = MediaHandler(config.MEDIA_DIR, config.MAX_RETRIES)
         self.backend = BackendClient(config)
 
@@ -1358,15 +1472,15 @@ class TelegramProductScraper:
         await self.connect()
 
         # Fetch Gemini models from Google API
-        if self.gemini.api_key:
+        if self.gemini.api_keys:
             models_loaded = await self.gemini.fetch_available_models()
             if models_loaded:
-                Logger.success(f"Gemini AI enabled with {len(self.gemini.models)} model(s)")
+                Logger.success(f"Gemini AI enabled with {len(self.gemini.models)} model(s) and {len(self.gemini.api_keys)} API key(s)")
             else:
                 Logger.warning("Failed to load Gemini models - using manual extraction")
                 self.gemini.enabled = False
         else:
-            Logger.warning("No Gemini API key - using manual extraction")
+            Logger.warning("No Gemini API keys - using manual extraction")
 
         if mode == 'history':
             await self._run_history_mode()
