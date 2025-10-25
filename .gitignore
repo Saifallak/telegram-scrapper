@@ -1,11 +1,84 @@
-# Scrapper.
-scraper_session.session
-scraper_session.session-journal
-
-# Environment.
+# ============================================
+# Sensitive Files
+# ============================================
 .env
+*.session
+*.session-journal
 
-# Products.
-offline_products.json
+# ============================================
+# Python
+# ============================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# ============================================
+# Project Specific
+# ============================================
+# Downloaded media
+downloaded_images/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.mp4
+
+# Data files
 products.json
+offline_products.json
 failed_products.json
+*.json.backup
+
+# Logs
+*.log
+logs/
+
+# ============================================
+# OS Files
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ============================================
+# Distribution / packaging
+# ============================================
+dist/
+build/
+*.egg-info/
+.eggs/

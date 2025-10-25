@@ -99,6 +99,51 @@ A robust, production-ready Telegram scraper for extracting product data with AI-
 
 ## 🚀 Installation
 
+### Quick Start (2 minutes)
+
+**Linux/Mac:**
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+**Windows:**
+```bash
+setup.bat
+```
+
+The setup script will:
+- ✅ Check Python version
+- ✅ Create virtual environment
+- ✅ Install dependencies
+- ✅ Create .env file
+- ✅ Create necessary directories
+
+### Manual Installation (5 minutes)
+
+```bash
+# 1. Clone and setup
+git clone <repository-url>
+cd telegram-scraper
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Configure
+cp .env.example .env
+nano .env  # Edit with your credentials
+
+# 4. Test Gemini (optional)
+python test_gemini.py
+
+# 5. Run!
+python scraper.py
+```
+
+### Detailed Installation
+
 ### Prerequisites
 - Python 3.8+
 - Telegram API credentials
@@ -182,6 +227,17 @@ MAX_RETRIES=3                    # Retry attempts for downloads
 2. Create a new API key
 3. Copy the key to `.env`
 
+**Test your API key:**
+```bash
+python test_gemini.py
+```
+
+This will:
+- ✅ Verify your API key
+- 📋 List all available models
+- 🧪 Test extraction with sample data
+- 💡 Show recommendations
+
 **Note**: Gemini is optional. Without it, the scraper uses manual extraction.
 
 ---
@@ -232,6 +288,9 @@ SCRAPER_MODE=hybrid python scraper.py
 ```
 telegram-scraper/
 ├── scraper.py              # Main application
+├── test_gemini.py          # Test Gemini API
+├── setup.sh                # Linux/Mac setup script
+├── setup.bat               # Windows setup script
 ├── requirements.txt        # Python dependencies
 ├── .env                    # Environment configuration
 ├── .env.example           # Example configuration
@@ -328,12 +387,31 @@ class GeminiExtractor:
 **Solution**: Check message format or enable Gemini API.
 
 #### 4. **Gemini API Errors**
+
+**Error: Model not found**
+```
+models/gemini-1.5-flash is not found for API version v1
+```
+**Solution**:
+```bash
+# Run scraper once to list available models
+python scraper.py
+
+# Or manually test:
+curl "https://generativelanguage.googleapis.com/v1/models?key=YOUR_KEY"
+
+# Update .env with correct model:
+GEMINI_MODEL=gemini-1.5-flash-latest
+```
+
+**Error: Quota exceeded**
 ```
 ⚠️ Gemini API error 429: Quota exceeded
 ```
 **Solution**:
-- Wait for quota reset
+- Wait for quota reset (usually resets daily)
 - Scraper automatically falls back to manual extraction
+- Free tier: 60 requests/minute, 1500 requests/day
 
 #### 5. **Backend Connection Failed**
 ```

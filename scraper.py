@@ -40,11 +40,10 @@ class Config:
     BACKEND_URL = os.getenv('BACKEND_URL', '')
     BACKEND_TOKEN = os.getenv('BACKEND_TOKEN', '')
     TENANT_ID = os.getenv('TENANT_ID', '7')
-    REFERER = os.getenv('REFERER', 'https://rosyland.obranchy.com')
 
     # AI
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+    GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash-latest')
 
     # Scraping
     STOP_DATE = os.getenv('STOP_DATE', '')
@@ -326,12 +325,48 @@ class TextExtractor:
 class GeminiExtractor:
     """Extract product data using Gemini AI"""
 
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    BASE_URL = "https://generativelanguage.googleapis.com/v1/models"
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
+    # Available models (as of 2024)
+    AVAILABLE_MODELS = [
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro',
+        'gemini-1.5-pro-latest',
+        'gemini-pro',
+    ]
+
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash-latest"):
         self.api_key = api_key
+        # Use correct model name format
+        if not model.startswith('models/'):
+            model = f"models/{model}"
         self.model = model
         self.enabled = bool(api_key)
+
+        if self.enabled:
+            Logger.info(f"Gemini model: {model}")
+
+    @staticmethod
+    async def list_available_models(api_key: str) -> List[str]:
+        """List all available Gemini models"""
+        url = f"https://generativelanguage.googleapis.com/v1/models?key={api_key}"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        models = []
+                        for model in data.get('models', []):
+                            name = model.get('name', '').replace('models/', '')
+                            if 'generateContent' in model.get('supportedGenerationMethods', []):
+                                models.append(name)
+                        return models
+        except Exception as e:
+            Logger.error(f"Failed to list models: {e}")
+
+        return []
 
     async def extract(self, text: str, channel_name: str) -> Optional[Dict]:
         """Extract product data using Gemini AI"""
@@ -377,7 +412,9 @@ class GeminiExtractor:
 
     async def _call_api(self, prompt: str) -> Dict:
         """Call Gemini API"""
-        url = f"{self.BASE_URL}/{self.model}:generateContent?key={self.api_key}"
+        # Remove 'models/' prefix if present for URL construction
+        model_name = self.model.replace('models/', '')
+        url = f"{self.BASE_URL}/{model_name}:generateContent?key={self.api_key}"
 
         payload = {
             "contents": [{
@@ -385,7 +422,9 @@ class GeminiExtractor:
             }],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 1000
+                "maxOutputTokens": 1000,
+                "topP": 0.8,
+                "topK": 10
             }
         }
 
@@ -583,7 +622,6 @@ class BackendClient:
             'Accept': "application/json",
             'Accept-Language': "ar",
             'Tenant-Id': self.config.TENANT_ID,
-            'Referer': self.config.REFERER,
         }
 
     def _save_offline(self, product: ProductData):
@@ -1085,6 +1123,24 @@ async def main():
     Logger.info("=== Telegram Product Scraper ===")
     Logger.info(f"Batch size: {config.BATCH_SIZE}")
     Logger.info(f"Max retries: {config.MAX_RETRIES}")
+
+    # Validate Gemini API if provided
+    if config.GEMINI_API_KEY:
+        Logger.info("Checking Gemini API...")
+        available_models = await GeminiExtractor.list_available_models(config.GEMINI_API_KEY)
+
+        if available_models:
+            Logger.success(f"Gemini API valid. Available models: {len(available_models)}")
+
+            # Check if selected model is available
+            model_name = config.GEMINI_MODEL.replace('models/', '')
+            if model_name not in available_models:
+                Logger.warning(f"Model '{model_name}' not found. Available:")
+                for model in available_models[:5]:  # Show first 5
+                    Logger.info(f"  - {model}")
+                Logger.warning("Will try anyway, but might fail")
+        else:
+            Logger.warning("Could not verify Gemini API key")
 
     # Create and run scraper
     scraper = TelegramProductScraper(config)
