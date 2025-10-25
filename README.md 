@@ -1,192 +1,442 @@
-# 🤖 Telegram Product Scraper
+# 🤖 Telegram Product Scraper with AI
 
-نظام سكرابينج منتجات من قنوات Telegram وإرسالها للـ Backend
+A robust, production-ready Telegram scraper for extracting product data with AI-powered extraction using Google Gemini.
 
-## 📋 المتطلبات
+## 📋 Table of Contents
 
-1. **Telegram API Credentials**
-   - اذهب إلى: https://my.telegram.org/apps
-   - سجل دخول برقم تليجرامك
-   - أنشئ تطبيق جديد واحصل على `api_id` و `api_hash`
+- [Features](#features)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
 
-2. **Python 3.11+** (للتطوير المحلي)
-3. **Docker & Docker Compose** (للـ Production)
-4. **Coolify v4** account
+---
 
-## 🚀 التشغيل المحلي
+## ✨ Features
 
-### 1. الإعداد الأولي
+### Core Features
+- ✅ **AI-Powered Extraction**: Uses Google Gemini API for accurate product data extraction
+- ✅ **Automatic Fallback**: Falls back to manual extraction if AI fails
+- ✅ **Multi-Channel Support**: Scrapes multiple Telegram channels simultaneously
+- ✅ **Media Management**: Downloads and manages product images/videos
+- ✅ **Backend Integration**: Sends data to REST API backend
+- ✅ **Offline Mode**: Saves data locally when backend is unavailable
 
-```bash
-# Clone the repository
-git clone <your-repo>
-cd telegram-scraper
+### Advanced Features
+- 🔄 **3 Operating Modes**: History, Live, and Hybrid
+- 🛡️ **Robust Error Handling**: Handles FloodWait, network errors, etc.
+- 💾 **Smart Caching**: Caches messages to reduce API calls
+- 📦 **Batch Processing**: Processes messages in configurable batches
+- 🔍 **Price Extraction**: Intelligently extracts Arabic prices
+- 📊 **Detailed Logging**: Color-coded, informative logs
+- 🏗️ **Modular Architecture**: Clean, maintainable code structure
 
-# إنشاء virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# أو
-venv\Scripts\activate  # Windows
+---
 
-# تثبيت المكتبات
-pip install -r requirements.txt
+## 🏛️ Architecture
 
-# إنشاء ملف .env
-cp .env.example .env
-# عدل الملف وضع بياناتك
+```
+┌─────────────────────────────────────────┐
+│         Telegram Scraper                │
+├─────────────────────────────────────────┤
+│                                         │
+│  ┌───────────────────────────────────┐ │
+│  │   TelegramProductScraper         │ │
+│  │   (Main Controller)              │ │
+│  └───────────────┬───────────────────┘ │
+│                  │                      │
+│     ┌────────────┼────────────┐        │
+│     │            │            │        │
+│     ▼            ▼            ▼        │
+│  ┌─────┐    ┌─────┐      ┌─────┐     │
+│  │Gemini│   │Text │      │Price│     │
+│  │Extract│  │Extract│    │Extract│    │
+│  └─────┘    └─────┘      └─────┘     │
+│     │            │            │        │
+│     └────────────┴────────────┘        │
+│                  │                      │
+│                  ▼                      │
+│          ┌──────────────┐              │
+│          │ ProductData  │              │
+│          └──────┬───────┘              │
+│                 │                       │
+│        ┌────────┴────────┐             │
+│        ▼                 ▼             │
+│   ┌─────────┐      ┌──────────┐       │
+│   │ Media   │      │ Backend  │       │
+│   │ Handler │      │ Client   │       │
+│   └─────────┘      └──────────┘       │
+│                                         │
+└─────────────────────────────────────────┘
 ```
 
-### 2. تعديل ملف .env
+### Components
+
+#### 1. **Extractors**
+- `GeminiExtractor`: AI-powered extraction using Gemini
+- `TextExtractor`: Manual text parsing
+- `PriceExtractor`: Arabic price extraction with regex
+
+#### 2. **Data Models**
+- `ProductData`: Complete product information
+- `ProductPrice`: Pricing structure
+- `Config`: Application configuration
+
+#### 3. **Handlers**
+- `MediaHandler`: Downloads and manages media files
+- `BackendClient`: API communication
+- `FileManager`: File operations
+
+#### 4. **Utilities**
+- `Logger`: Color-coded logging
+- Error handling with retry logic
+- FloodWait protection
+
+---
+
+## 🚀 Installation
+
+### Prerequisites
+- Python 3.8+
+- Telegram API credentials
+- Google Gemini API key (optional)
+
+### Steps
+
+1. **Clone the repository**
+```bash
+git clone <repository-url>
+cd telegram-scraper
+```
+
+2. **Create virtual environment**
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+4. **Configure environment**
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+```
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+Create a `.env` file in the project root:
 
 ```env
-TELEGRAM_API_ID=123456
-TELEGRAM_API_HASH=your_hash_here
+# ============================================
+# Telegram Configuration (Required)
+# ============================================
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
 TELEGRAM_PHONE=+201234567890
-BACKEND_URL=http://localhost:8000/api/products
-```
 
-### 3. التشغيل
-
-```bash
-# سكرابينج الرسائل القديمة (آخر 100 رسالة)
-python scraper.py
-
-# المراقبة المباشرة للرسائل الجديدة
-# عدل في scraper.py: mode='live'
-python scraper.py
-```
-
-**ملاحظة مهمة**: عند أول تشغيل، ستطلب منك Telegram كود التحقق المرسل لرقمك.
-
-## 🐳 Deployment على Coolify v4
-
-### 1. إعداد المشروع في Coolify
-
-```bash
-# رفع الكود على Git repository (GitHub/GitLab)
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin <your-git-repo>
-git push -u origin main
-```
-
-### 2. إنشاء مشروع جديد في Coolify
-
-1. اذهب إلى Coolify Dashboard
-2. اضغط **+ New Resource**
-3. اختر **Public Repository**
-4. الصق رابط الـ Git repository
-5. اختر **Dockerfile** كـ Build Pack
-
-### 3. إعداد Environment Variables
-
-في Coolify، اذهب إلى **Environment Variables** وأضف:
-
-```
-TELEGRAM_API_ID=123456
-TELEGRAM_API_HASH=your_hash_here
-TELEGRAM_PHONE=+201234567890
+# ============================================
+# Backend Configuration (Optional)
+# ============================================
 BACKEND_URL=https://your-backend.com/api/products
+BACKEND_TOKEN=your_backend_token
+TENANT_ID=7
+
+# ============================================
+# AI Configuration (Optional)
+# ============================================
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-1.5-flash
+
+# ============================================
+# Scraping Configuration
+# ============================================
+SCRAPER_MODE=hybrid              # history, live, or hybrid
+STOP_DATE=2024-01-01            # Optional: stop scraping at this date
+BATCH_SIZE=100                   # Messages per batch
+MAX_LOOKBACK=20                  # Max messages to look back for media
+MAX_RETRIES=3                    # Retry attempts for downloads
 ```
 
-### 4. إعداد Volumes (لحفظ البيانات)
+### Getting API Keys
 
-في Coolify:
-- **Volumes** → Add Volume
-  - `/app/downloaded_images` → لحفظ الصور
-  - `/app/scraper_session.session` → لحفظ الـ session
+#### Telegram API
+1. Go to https://my.telegram.org
+2. Login with your phone number
+3. Go to "API Development Tools"
+4. Create a new application
+5. Copy `API_ID` and `API_HASH`
 
-### 5. Deploy
+#### Gemini API
+1. Go to https://makersuite.google.com/app/apikey
+2. Create a new API key
+3. Copy the key to `.env`
 
-اضغط **Deploy** وانتظر حتى يكتمل البناء والتشغيل.
+**Note**: Gemini is optional. Without it, the scraper uses manual extraction.
 
-## 🔐 مشكلة الـ Session في Production
+---
 
-### الحل الأمثل: تسجيل الدخول محلياً أولاً
+## 📖 Usage
+
+### Basic Usage
 
 ```bash
-# 1. شغل السكرابر محلياً مرة واحدة
+# Run in hybrid mode (history + live)
 python scraper.py
 
-# 2. سيتم إنشاء ملف scraper_session.session
-# 3. ارفع الملف هذا إلى Coolify عبر Volume أو Secret
-
-# في Coolify:
-# Resources → Secrets → Add Secret
-# Name: telegram_session
-# Content: (محتوى ملف scraper_session.session)
+# Specify mode via environment
+SCRAPER_MODE=history python scraper.py
 ```
 
-### البديل: استخدام Bot Token
+### Operating Modes
+
+#### 1. **History Mode**
+Scrapes all historical messages from channels.
+
+```bash
+SCRAPER_MODE=history python scraper.py
+```
+
+**Output**: `products.json`
+
+#### 2. **Live Mode**
+Monitors channels for new messages in real-time.
+
+```bash
+SCRAPER_MODE=live python scraper.py
+```
+
+**Behavior**: Runs indefinitely until interrupted
+
+#### 3. **Hybrid Mode** (Recommended)
+Scrapes history first, then switches to live monitoring.
+
+```bash
+SCRAPER_MODE=hybrid python scraper.py
+```
+
+---
+
+## 📁 Project Structure
+
+```
+telegram-scraper/
+├── scraper.py              # Main application
+├── requirements.txt        # Python dependencies
+├── .env                    # Environment configuration
+├── .env.example           # Example configuration
+├── README.md              # This file
+│
+├── downloaded_images/     # Downloaded media (auto-created)
+├── scraper_session.session # Telegram session (auto-created)
+│
+├── products.json          # Scraped products (history mode)
+├── offline_products.json  # Products when backend is down
+└── failed_products.json   # Products that failed to send
+```
+
+---
+
+## 🛠️ Development
+
+### Code Quality
+
+The codebase follows these principles:
+
+1. **SOLID Principles**
+   - Single Responsibility: Each class has one job
+   - Open/Closed: Easy to extend
+   - Dependency Injection: Used throughout
+
+2. **Clean Code**
+   - Type hints everywhere
+   - Comprehensive docstrings
+   - Descriptive variable names
+
+3. **Error Handling**
+   - Try-catch blocks with specific exceptions
+   - Graceful degradation
+   - Detailed error logging
+
+### Adding New Channels
+
+Edit the `CHANNELS` dictionary in `scraper.py`:
 
 ```python
-# إذا كنت تريد تجنب مشكلة الـ Session تماماً
-# أنشئ Bot عبر @BotFather وأضف البوت للقنوات
-# ثم استخدم Bot Token بدلاً من User Account
-```
-
-## 📊 هيكل البيانات المرسلة للـ Backend
-
-```json
-{
-  "channel_id": 123456789,
-  "message_id": 12345,
-  "timestamp": "2025-10-24T10:30:00",
-  "description": "منتج رائع... السعر 299 جنيه بدلا من 399",
-  "image_urls": [
-    "https://your-cdn.com/image1.jpg",
-    "https://your-cdn.com/image2.jpg"
-  ],
-  "prices": {
-    "current_price": 299,
-    "old_price": 399
-  }
+CHANNELS = {
+    'https://t.me/+YOUR_CHANNEL_ID': 'Category Name',
+    # Add more channels here
 }
 ```
 
-## 🔄 Workflow الكامل
+### Customizing Extraction
 
-```
-Telegram Channels
-       ↓
-  Scraper (Telethon)
-       ↓
-  Extract Data (Prices, Images, Description)
-       ↓
-  Download Images Locally
-       ↓
-  Upload Images to Backend/CDN
-       ↓
-  Send Product Data to Backend API
-       ↓
-  Backend saves to Database
+#### Add Custom Price Pattern
+```python
+class PriceExtractor:
+    PRICE_PATTERNS = [
+        # Add your pattern here
+        r'your_pattern_(\d+(?:\.\d+)?)',
+    ]
 ```
 
-## 🛠️ Troubleshooting
+#### Customize Gemini Prompt
+```python
+class GeminiExtractor:
+    def _build_prompt(self, text: str, channel_name: str) -> str:
+        # Modify prompt here
+        return f"""Your custom prompt: {text}"""
+```
 
-### خطأ: "Could not connect to Telegram"
-- تأكد من الـ API credentials صحيحة
-- تأكد من الإنترنت متصل
-- جرب VPN إذا كان Telegram محجوب
+---
 
-### خطأ: "Session file not found"
-- سجل دخول محلياً أولاً
-- ارفع ملف الـ session إلى Coolify
+## 🐛 Troubleshooting
 
-### الصور لا تحمل
-- تأكد من المساحة متوفرة
-- تأكد من الـ Volume محدد صح في Coolify
+### Common Issues
 
-## 📝 تحسينات مستقبلية
+#### 1. **FloodWait Errors**
+```
+⏳ FloodWait: waiting 300s...
+```
+**Solution**: The scraper automatically handles this. Just wait.
 
-- [ ] إضافة Queue system (Redis + Celery)
-- [ ] OCR لاستخراج الأسعار من الصور
-- [ ] AI لتصنيف المنتجات تلقائياً
-- [ ] Dashboard لمتابعة السكرابينج
-- [ ] Retry mechanism للرسائل الفاشلة
-- [ ] Webhooks للإشعارات
+#### 2. **Session Expired**
+```
+❌ Failed to connect: Session expired
+```
+**Solution**: Delete `scraper_session.session` and run again.
 
-## 📞 الدعم
+#### 3. **No Products Extracted**
+```
+⚠️ Invalid product skipped
+```
+**Causes**:
+- No media in message
+- Price not detected
+- Empty product name
 
-إذا واجهت أي مشكلة، افتح Issue في الـ repository.
+**Solution**: Check message format or enable Gemini API.
+
+#### 4. **Gemini API Errors**
+```
+⚠️ Gemini API error 429: Quota exceeded
+```
+**Solution**:
+- Wait for quota reset
+- Scraper automatically falls back to manual extraction
+
+#### 5. **Backend Connection Failed**
+```
+❌ Failed to send product: Connection timeout
+```
+**Solution**:
+- Check `BACKEND_URL` in `.env`
+- Products are saved to `failed_products.json`
+
+### Debug Mode
+
+Enable detailed logging:
+
+```python
+# In scraper.py, add at the top:
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+---
+
+## 📊 Output Formats
+
+### Product JSON Structure
+
+```json
+{
+  "unique_id": "123456_789",
+  "channel_id": 123456,
+  "message_id": 789,
+  "timestamp": "2024-10-25T10:30:00+00:00",
+  "channel_name": "أدوات منزلية",
+  "name": "Product Name",
+  "short_description": "Short desc",
+  "description": "Full description",
+  "images": [
+    "downloaded_images/product_123456_789_0.jpg"
+  ],
+  "prices": {
+    "current_price": 150.0,
+    "old_price": 200.0
+  },
+  "extraction_method": "✨ Gemini AI"
+}
+```
+
+---
+
+## 🔒 Security
+
+- Never commit `.env` file
+- Keep API keys secure
+- Use environment variables for sensitive data
+- Review permissions before joining channels
+
+---
+
+## 📈 Performance Tips
+
+1. **Batch Size**: Increase for faster scraping
+   ```env
+   BATCH_SIZE=200
+   ```
+
+2. **Parallel Processing**: Modify code to process channels in parallel
+
+3. **Caching**: Messages are automatically cached
+
+4. **Media**: Only supported formats are downloaded
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
+
+---
+
+## 📝 License
+
+[Your License Here]
+
+---
+
+## 🙏 Acknowledgments
+
+- Telethon for Telegram API
+- Google Gemini for AI extraction
+- aiohttp for async HTTP
+
+---
+
+## 📞 Support
+
+For issues and questions:
+- Open an issue on GitHub
+- Check existing issues first
+- Provide logs and configuration (without sensitive data)
+
+---
+
+**Made with ❤️ for efficient product scraping**
