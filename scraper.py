@@ -194,8 +194,8 @@ class TelegramProductScraper:
                 form.add_field('name[en]', product_data.get('name', ''))
                 form.add_field('description[ar]', product_data.get('description', ''))
                 form.add_field('description[en]', product_data.get('description', ''))
-                form.add_field('short_description[ar]', product_data.get('description', ''))
-                form.add_field('short_description[en]', product_data.get('description', ''))
+                form.add_field('short_description[ar]', product_data.get('short_description', ''))
+                form.add_field('short_description[en]', product_data.get('short_description', ''))
                 form.add_field('category_name', product_data.get('channel_name', ''))
 
                 prices = product_data.get('prices', {})
