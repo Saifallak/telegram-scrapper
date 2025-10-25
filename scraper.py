@@ -451,20 +451,43 @@ class TelegramProductScraper:
 
         @self.client.on(events.NewMessage(chats=list(self.channel_entities.keys())))
         async def handler(event):
-            print(f"🆕 New message received!", flush=True)
+            print(f"🆕 New message received from chat_id: {event.chat_id}!", flush=True)
             try:
                 chat_id = event.chat_id
 
+                # نجيب الـ entity والاسم من الـ cache
                 if chat_id in self.channel_entities:
                     entity, channel_name = self.channel_entities[chat_id]
+                    print(f"📍 Channel identified: {channel_name}", flush=True)
                     await self.process_message(event.message, channel_name, entity)
                 else:
-                    print(f"⚠️ Unknown channel: {chat_id}", flush=True)
+                    # لو مش موجود في الـ cache، نحاول نجيبه
+                    print(f"⚠️ Unknown channel: {chat_id}, attempting to identify...", flush=True)
+                    try:
+                        entity = await event.get_chat()
+                        # نشوف لو القناة موجودة في الـ CHANNELS
+                        found = False
+                        for link, name in CHANNELS.items():
+                            # نحاول نطابق بالـ ID أو الـ username
+                            if str(entity.id) in link or (
+                                    hasattr(entity, 'username') and entity.username and entity.username in link):
+                                channel_name = name
+                                self.channel_entities[chat_id] = (entity, channel_name)
+                                print(f"✅ Channel identified and cached: {channel_name}", flush=True)
+                                await self.process_message(event.message, channel_name, entity)
+                                found = True
+                                break
+
+                        if not found:
+                            print(f"❌ Channel not found in CHANNELS dict", flush=True)
+                    except Exception as e:
+                        print(f"❌ Failed to identify channel: {e}", flush=True)
 
             except Exception as e:
                 print(f"❌ Error in live handler: {e}", flush=True)
 
         print("👀 Monitoring channels for new messages...", flush=True)
+        print(f"📡 Monitoring {len(self.channel_entities)} channels: {list(self.channel_entities.keys())}", flush=True)
         await self.client.run_until_disconnected()
 
     async def run(self, mode='history'):
