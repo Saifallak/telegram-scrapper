@@ -380,7 +380,7 @@ class TelegramProductScraper:
 
                     try:
                         me = await self.client.get_me()
-                        await self.client(GetParticipantRequest(channel=entity, user_id=me.id))
+                        await self.client(GetParticipantRequest(channel=entity, participant=me))
                         print(f"✅ Already a member of {entity.title} ({channel_name})", flush=True)
                     except UserNotParticipantError:
                         try:
